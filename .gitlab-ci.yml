@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Linutronix GmbH
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+default:
+  image: debian:trixie-slim
+
+codeanalysis:
+  script:
+    - apt update && apt -y install git libmagic1t64 python3-pdm
+    - pdm install -d -G dev  # uses hash checking to mitigate supply chain attacks
+    - pdm run ruff check  # check for common coding errors, permissive config yet
+    - pdm run ruff format --check  # Enforce coding format, compatible with black.
+    - pdm run reuse lint

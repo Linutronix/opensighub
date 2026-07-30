@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Linutronix GmbH
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+.idea/
+.pdm-python
+.pybuild/
+.venv/
+__pycache__/
+
+# Softlink to Debian repository
+debian
+
+# C build artifacts
+*.efi
+*.lib
+*.o
+*.bin
+*.bin.auth
+*.cmd
+*.symvers
+*.ko
+*.mod
+*.mod.*
+*.order

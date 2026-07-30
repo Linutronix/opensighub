@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 Linutronix GmbH
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[project]
+name = "opensighub"
+version = "0.2.0"
+license = {text = "MIT License"}
+description = "OpenSigHub wraps different code signing tools and schemes in a common CLI"
+authors = [
+    {name = "Linutronix GmbH", email = "info@linutronix.de"},
+]
+dependencies = [
+    "PyYAML~=6.0",
+]
+requires-python = ">= 3.11"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python"
+]
+
+[project.scripts]
+osh = "opensighub.cli:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: unit tests",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[dependency-groups]
+dev = [
+    "bandit~=1.7",
+    "mypy~=1.0",
+    "pytest~=7.2",
+    "ruff~=0.6",
+    "pytest-cov~=6.0.0",
+    "reuse>=6.2.0",
+]
