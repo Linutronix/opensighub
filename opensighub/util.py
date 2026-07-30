@@ -6,10 +6,10 @@ import re
 import subprocess
 import tempfile
 from collections.abc import MutableMapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, fields, replace
-from multiprocessing.synchronize import Lock
 from pathlib import Path
-from typing import ClassVar, Optional
+from typing import ClassVar
 from urllib.parse import parse_qsl, urlparse, urlunparse
 
 
@@ -50,7 +50,7 @@ class Pkcs11Uri:
         return value
 
     @classmethod
-    def try_parse(cls, uri: str) -> Optional["Pkcs11Uri"]:
+    def try_parse(cls, uri: str) -> "Pkcs11Uri":
         """Decompose a PKCS#11 URI string into a structured Python type.
 
         See also
@@ -101,7 +101,9 @@ class CertCache:
     """Pass-through certs in filesystem and temporarily export public key
     certificates from PKCS#11 to filesystem"""
 
-    def __init__(self, cert_dict: MutableMapping[tuple[str, str], Path] | None = None):
+    def __init__(
+        self, cert_dict: MutableMapping[tuple[str | None, str | None], Path] | None = None
+    ):
         self.cert_pool: tempfile.TemporaryDirectory | None = None
         self.by_pkcs11_id_label = {} if cert_dict is None else cert_dict
 
@@ -125,6 +127,7 @@ class CertCache:
             self.cert_pool.cleanup()
 
     def exported_from_pkcs11(self, pkcs11uri: Pkcs11Uri) -> Path:
+        assert self.cert_pool
         pkcs11uri_id = (pkcs11uri.id, pkcs11uri.object)
         if pkcs11uri_id not in self.by_pkcs11_id_label:
             with tempfile.NamedTemporaryFile(
@@ -139,7 +142,11 @@ class CertCache:
 class MultiprocessingCertCache(CertCache):
     """A synchronized CertCache where many processes export certificates concurrently."""
 
-    def __init__(self, shared_cert_dict: MutableMapping[tuple[str, str], Path], lock: Lock):
+    def __init__(
+        self,
+        shared_cert_dict: MutableMapping[tuple[str | None, str | None], Path],
+        lock: AbstractContextManager,
+    ):
         super().__init__(shared_cert_dict)
         self.shared_cert_dict_lock = lock
 
