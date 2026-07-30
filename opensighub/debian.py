@@ -97,7 +97,7 @@ class LocalPackagePool:
         self.download_dir = Path(self.tmp_dir.name)
         self.extracted_dir = self.download_dir / "extracted"
         self.chdist_dir = self.download_dir / "chdist"
-        self.dirs_by_pkgname = {}
+        self.dirs_by_pkgname: dict[str, PkgInfo] = {}
 
     def download_and_extract_debian(self, job: DebianSigningJob, job_bin_packages: Iterable[str]):
         for package_name in job_bin_packages:
@@ -116,7 +116,7 @@ class LocalPackagePool:
         cmd = [
             "chdist",
             "-d",
-            self.chdist_dir,
+            str(self.chdist_dir),
             "-a",
             architecture,
             "apt-get",
@@ -145,7 +145,7 @@ class LocalPackagePool:
         if (
             not os.path.isdir(self.chdist_dir)
             or dist
-            not in subprocess.check_output(["chdist", "-d", self.chdist_dir, "list"])
+            not in subprocess.check_output(["chdist", "-d", str(self.chdist_dir), "list"])
             .decode("ascii")
             .strip()
         ):
@@ -153,7 +153,7 @@ class LocalPackagePool:
             cmd = [
                 "chdist",
                 "-d",
-                self.chdist_dir,
+                str(self.chdist_dir),
                 "create",
                 dist,
                 self.config.archives[archive].deb[0].url,
@@ -178,7 +178,7 @@ class LocalPackagePool:
                     self.chdist_dir / dist / "etc" / "apt" / "trusted.gpg.d" / "archive.asc",
                 )
 
-        subprocess.check_call(["chdist", "-d", self.chdist_dir, "apt-get", dist, "update"])
+        subprocess.check_call(["chdist", "-d", str(self.chdist_dir), "apt-get", dist, "update"])
 
     @staticmethod
     def build_pkg_full_name(pkg: str, version: str, arch: str):
@@ -210,6 +210,7 @@ class DebianSigningProcessor:
             job.signing_template, job.version, job.architecture, job.suite_codename, job.archive_id
         )
         self._fetch_and_sign(job, pool)
+        assert self.template_source_dir is not None
         source_name = (
             subprocess.check_output(
                 ["dpkg-parsechangelog", "-S", "Source"], cwd=self.template_source_dir
@@ -244,6 +245,7 @@ class DebianSigningProcessor:
         self.files_json_path = signing_template_dir / "files.json"
 
     def _fetch_and_sign(self, job: DebianSigningJob, pool: SigningPool):
+        assert self.files_json_path is not None
         jobs = []
         with open(self.files_json_path, "r") as f:
             files = FilesJson.from_dict(json.load(f))
@@ -256,6 +258,7 @@ class DebianSigningProcessor:
     def _make_job(
         self, pkg_name: str, file: FileEntry
     ) -> Hab4SignJob | LinuxModuleSignJob | UefiSignJob | RawSignJob | OpteeTaSignJob | RpiSignJob:
+        assert self.template_source_dir is not None
         pkg_dir = self.repo.dirs_by_pkgname[pkg_name].extract_dir
         rel_file = file.file.relative_to("/") if file.file.is_absolute() else file.file
         unsigned_file = pkg_dir / rel_file

@@ -135,7 +135,7 @@ class RawSigningCfg:
     key: SigningKey
     alg_hash: str
     padding: str
-    salt_len: str
+    salt_len: str | None
     mgf1_md: str | None = None
 
     @classmethod

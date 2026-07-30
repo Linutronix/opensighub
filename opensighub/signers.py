@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from multiprocessing import Pool
 from pathlib import Path
-from typing import TextIO
+from typing import IO
 
 from opensighub.config import (
     Hab4SigningCfg,
@@ -114,10 +114,10 @@ class UefiSign:
                 "--key",
                 str(key_uri),
                 "--cert",
-                certificate_file,
+                str(certificate_file),
                 "--output",
-                signed_artifact,
-                artifact,
+                str(signed_artifact),
+                str(artifact),
             ]
         )
         logger.info("Sign UEFI binary %s", artifact)
@@ -196,13 +196,13 @@ class UefiVariableSign:
                 "--key",
                 str(key_uri),
                 "--cert",
-                certificate_file,
+                str(certificate_file),
                 *attr_cmd_arg,
                 *guid_cmd_arg,
                 "--output",
-                signed_artifact,
+                str(signed_artifact),
                 variable_name,
-                artifact,
+                str(artifact),
             ]
         )
         logger.info("Sign data blob %s to UEFI authenticated variable %s", artifact, variable_name)
@@ -235,7 +235,7 @@ class LinuxModuleSign:
             cmd = ["sign-file"]
             if detached:
                 cmd.append("-d")
-            cmd.extend(["sha512", str(key_uri), certificate_file, artifact_copy])
+            cmd.extend(["sha512", str(key_uri), str(certificate_file), str(artifact_copy)])
             if not detached:
                 # custom destination is only supported for non-detached
                 cmd.append(str(signed_artifact))
@@ -267,9 +267,9 @@ class Hab4Sign:
             "--hab_ver",
             "4",
             "--table",
-            table_bin_outfile,
+            str(table_bin_outfile),
             "--efuses",
-            efuses_outfile,
+            str(efuses_outfile),
             "--digest",
             "sha256",
             "--certs",
@@ -282,8 +282,8 @@ class Hab4Sign:
 
     @staticmethod
     def csf_substitute(
-        csf_in_file: TextIO,
-        csf_out_file: TextIO,
+        csf_in_file: IO[str],
+        csf_out_file: IO[str],
         srk_table: Path,
         srk_src_idx: int,
         csf_uri: str,
@@ -326,7 +326,7 @@ class Hab4Sign:
                 csf_out_file.write(f'  File = "{img_uri}"\n')
             elif section == "authenticate data" and key == "blocks" and value:
                 blocks = value.split(",")
-                block_lines = []
+                block_lines: list[str] = []
                 for block in blocks:
                     block_args = block.strip().split(maxsplit=3)
                     prefixed_file = Path(auth_data_prefix) / Path(
@@ -362,8 +362,8 @@ class Hab4Sign:
             tempfile.NamedTemporaryFile("w") as csf_tmp_out,
             tempfile.TemporaryDirectory() as tmp_working_dir,
         ):
-            tmp_working_dir = Path(tmp_working_dir)
-            srk_table = self.make_srktable(tmp_working_dir)
+            tmp_working_dir_path = Path(tmp_working_dir)
+            srk_table = self.make_srktable(tmp_working_dir_path)
             self.csf_substitute(
                 csf_in,
                 csf_tmp_out,
@@ -373,10 +373,10 @@ class Hab4Sign:
                 self.config.img_key.pkcs11_uri,
                 auth_data_prefix,
             )
-            cmd = ["cst", "-i", csf_tmp_out.name, "-o", csf_bin_out_path, "-b", "pkcs11"]
+            cmd = ["cst", "-i", csf_tmp_out.name, "-o", str(csf_bin_out_path), "-b", "pkcs11"]
             logger.info("Sign HAB4 command sequence file %s", csf_txt_in_path)
             logger.debug("%s", " ".join([str(arg) for arg in cmd]))
-            subprocess.check_call(cmd, cwd=tmp_working_dir)
+            subprocess.check_call(cmd, cwd=tmp_working_dir_path)
 
 
 class RawSign:
@@ -393,6 +393,7 @@ class RawSign:
             "rsa_padding_mode:" + cfg.padding,
         ]
         if cfg.padding == "pss":
+            assert cfg.salt_len is not None
             mgf1 = cfg.mgf1_md or cfg.alg_hash
             args += [
                 "-pkeyopt",
@@ -445,8 +446,8 @@ class RawSign:
             "-" + self.config.alg_hash,
             "-binary",
             "-out",
-            digest,
-            artifact,
+            str(digest),
+            str(artifact),
         ]
         logger.info("Digest raw binary %s", artifact)
         logger.debug("%s", " ".join([str(arg) for arg in cmd]))

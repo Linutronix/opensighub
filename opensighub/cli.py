@@ -53,13 +53,13 @@ class DebianRunConfig(BaseRunConfig):
             Path(self.output),
         )
         worker = SigningPool(
-            UefiSign(cert_cache, config.uefi),
+            UefiSign(cert_cache, config.uefi) if config.uefi else None,
             None,  # UefiVariableSign
             None,  # SwuSign
-            LinuxModuleSign(cert_cache, config.kernel_modules),
-            Hab4Sign(cert_cache, config.hab4),
-            OpteeTaSign(cert_cache, config.optee_ta),
-            RpiSign(cert_cache, config.rpi),
+            LinuxModuleSign(cert_cache, config.kernel_modules) if config.kernel_modules else None,
+            Hab4Sign(cert_cache, config.hab4) if config.hab4 else None,
+            OpteeTaSign(cert_cache, config.optee_ta) if config.optee_ta else None,
+            RpiSign(cert_cache, config.rpi) if config.rpi else None,
             parallel=self.parallel,
         )
 
@@ -80,7 +80,7 @@ class UefiVariableRunConfig(BaseRunConfig):
     ) -> Callable[[], None]:
         pool = SigningPool(
             None,  # uefi_signer
-            UefiVariableSign(cert_cache, config.uefi),
+            UefiVariableSign(cert_cache, config.uefi) if config.uefi else None,
             None,  # swu_signer
             None,  # linux_module_signer
             None,  # hab4_signer
@@ -105,7 +105,7 @@ class SwuRunConfig(BaseRunConfig):
         pool = SigningPool(
             None,  # uefi_signer
             None,  # UefiVariableSign
-            SwuSign(cert_cache, config.swu),
+            SwuSign(cert_cache, config.swu) if config.swu else None,
             None,  # linux_module_signer
             None,  # hab4_signer
             None,  # optee_ta_signer
@@ -127,7 +127,7 @@ class EfiBinaryRunConfig(BaseRunConfig):
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
         pool = SigningPool(
-            UefiSign(cert_cache, config.uefi),
+            UefiSign(cert_cache, config.uefi) if config.uefi else None,
             None,  # uefi_variable_signer
             None,  # swu_signer
             None,  # linux_module_signer
