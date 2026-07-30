@@ -53,6 +53,7 @@ def test_pkcs11_to_private_cert_pair():
         assert cert.type == "cert"
 
 
+@pytest.mark.integration
 def test_cert_from_token(softhsm):
     with CertCache() as cc, open(cc["pkcs11:token=SoftHSM;object=habCA1;type=public"]) as f:
         assert len(f.read()) > 0

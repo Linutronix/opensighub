@@ -30,6 +30,7 @@ def files_json():
 }"""
 
 
+@pytest.mark.integration
 def test_debian_org_sign_shim(tmp_path, softhsm, sample_config_yaml_file):
     """Sign shim from internet debian.org archive."""
     sign_main(
