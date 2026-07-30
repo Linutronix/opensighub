@@ -88,14 +88,10 @@ class UefiSigningCfg:
 
     @classmethod
     def from_dict(cls, data: dict, keys: dict[str, SigningKey]):
-        variables = (
-            {
-                k: UefiVariableCfg(keys[v["key"]], v.get("attributes"), v.get("guid"))
-                for k, v in data["variables"].items()
-            }
-            if "variables" in data
-            else None
-        )
+        variables = {
+            k: UefiVariableCfg(keys[v["key"]], v.get("attributes"), v.get("guid"))
+            for k, v in data.get("variables", {}).items()
+        }
         return cls(key=keys[data["key"]], variables=variables)
 
 
