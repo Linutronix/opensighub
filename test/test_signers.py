@@ -5,6 +5,8 @@
 import shutil
 import subprocess
 
+import pytest
+
 from opensighub.cli import UefiVariableRunConfig, sign_main
 from opensighub.signers import (
     Hab4Sign,
@@ -19,6 +21,7 @@ from opensighub.signers import (
 from opensighub.util import CertCache, Pkcs11Uri
 
 
+@pytest.mark.integration
 def test_uefi_sign(softhsm, sample_config, sample_efi_file, tmp_path):
     signature_dest = tmp_path / "signature.pk7"
     with CertCache() as cc:
@@ -37,6 +40,7 @@ def test_uefi_sign(softhsm, sample_config, sample_efi_file, tmp_path):
         )
 
 
+@pytest.mark.integration
 def test_uefi_variable_sign(softhsm, sample_config, sample_blob, tmp_path):
     signature_dest = tmp_path / "myvar.auth"
     with CertCache() as cc:
@@ -45,6 +49,7 @@ def test_uefi_variable_sign(softhsm, sample_config, sample_blob, tmp_path):
         assert signature_dest.is_file()
 
 
+@pytest.mark.integration
 def test_kernel_module_sign(softhsm, sample_config, sample_ko_file, tmp_path):
     signature_dest = tmp_path / "signature.pk7"
     with CertCache() as cc:
@@ -71,6 +76,7 @@ def test_kernel_module_sign(softhsm, sample_config, sample_ko_file, tmp_path):
         )
 
 
+@pytest.mark.integration
 def test_hab4_sign(softhsm, sample_config, sample_hab4csf_file, tmp_path):
     path_to_minimal_hab4_bin = sample_hab4csf_file.parent
     signed_csf_dest = tmp_path / "csf.bin"
@@ -93,6 +99,7 @@ def test_hab4_sign(softhsm, sample_config, sample_hab4csf_file, tmp_path):
     )
 
 
+@pytest.mark.integration
 def test_uefi_variable_sign_cli(softhsm, sample_config_yaml_file, sample_blob, tmp_path):
     signed_artifact = tmp_path / "myvar.auth"
     sign_main(
@@ -110,6 +117,7 @@ def test_uefi_variable_sign_cli(softhsm, sample_config_yaml_file, sample_blob, t
     assert signed_artifact.is_file()
 
 
+@pytest.mark.integration
 def test_optee_ta_sign(softhsm, sample_config, sample_ta_file, tmp_path):
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
@@ -148,6 +156,7 @@ def test_optee_ta_sign(softhsm, sample_config, sample_ta_file, tmp_path):
         assert out_ta.is_file()
 
 
+@pytest.mark.integration
 def test_rpi_boot_sign(softhsm, sample_config, sample_rpi_boot_file, tmp_path):
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
@@ -172,6 +181,7 @@ def test_rpi_boot_sign(softhsm, sample_config, sample_rpi_boot_file, tmp_path):
         )
 
 
+@pytest.mark.integration
 def test_swu_sign(softhsm, sample_config, swu_file, tmp_path):
     sig_dest = tmp_path / "sign.swu"
     with CertCache() as cc:

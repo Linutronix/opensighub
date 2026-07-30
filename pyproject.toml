@@ -24,7 +24,7 @@ osh = "opensighub.cli:main"
 
 [tool.pytest.ini_options]
 markers = [
-    "unit: unit tests",
+    "integration: tests requiring native signing tools, a SoftHSM token, and/or network access to external repositories",
 ]
 
 [tool.ruff]
