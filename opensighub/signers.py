@@ -403,14 +403,13 @@ class RawSign:
             ]
         return args
 
-    def sign(self, artifact: Path, signed_artifact: Path, detached: bool = True):
+    def sign_digest(self, digest: Path, signed_digest: Path) -> None:
         """
-        Basic raw-signature: artifact (raw bytes) -> signed_artifact
+        Basic raw-signature: digest (raw bytes) -> signed_digest
         using openssl pkeyutl + pkcs11.
         """
         key_uri = Pkcs11Uri.try_parse(self.config.key.pkcs11_uri)
 
-        assert not detached
         cmd = (
             [
                 "openssl",
@@ -426,12 +425,12 @@ class RawSign:
             + self.pkeyopt_args()
             + [
                 "-in",
-                str(artifact),
+                str(digest),
                 "-out",
-                str(signed_artifact),
+                str(signed_digest),
             ]
         )
-        logger.info("sign raw binary %s", artifact)
+        logger.info("sign raw digest %s", digest)
         logger.debug("%s", " ".join([str(arg) for arg in cmd]))
         subprocess.run(cmd, check=True)
 
@@ -502,7 +501,7 @@ class OpteeTaSign(RawSign):
             digest_bin.write_bytes(dig_raw)
 
             # 3) Sign digest
-            super().sign(digest_bin, sig_bin, False)
+            super().sign_digest(digest_bin, sig_bin)
 
             # 4) Encode back with base64
             sig_raw = sig_bin.read_bytes()
@@ -528,7 +527,7 @@ class RpiSign(RawSign):
             super().digest(artifact, digest_bin)
 
             # Create signature
-            super().sign(digest_bin, sig_bin, False)
+            super().sign_digest(digest_bin, sig_bin)
 
             # Create the format needed by rpi
             digest_hex = digest_bin.read_bytes().hex()
