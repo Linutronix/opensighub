@@ -40,8 +40,6 @@ class DebianSigningJob:
 class FileEntry:
     sig_type: str
     file: Path
-    embed: Path | None = None
-    embed_offset: int | None = None
     version: int | None = None
 
 
@@ -58,8 +56,6 @@ class Package:
                 FileEntry(
                     sig_type=f["sig_type"],
                     file=Path(f["file"]),
-                    embed=Path(f["embed"]) if "embed" in f else None,
-                    embed_offset=int(f["embed_offset"]) if "embed_offset" in f else None,
                     version=int(f["version"]) if "version" in f else None,
                 )
                 for f in data.get("files")
