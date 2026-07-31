@@ -71,7 +71,7 @@ class RawSignJob:
 @dataclass
 class OpteeTaSignJob(RawSignJob):
     ta_type: str
-    ta_ver: int
+    ta_ver: int | None
 
 
 @dataclass
@@ -455,7 +455,7 @@ class RawSign:
 
 
 class OpteeTaSign(RawSign):
-    def sign(self, artifact: Path, signed_artifact: Path, ta_ver: int) -> None:
+    def sign(self, artifact: Path, signed_artifact: Path, ta_ver: int | None) -> None:
         """
         Creates optee-specific digest signature for trusted application.
 
@@ -491,9 +491,9 @@ class OpteeTaSign(RawSign):
                 str(artifact),
                 "--dig",
                 str(dig_file),
-                "--ta-version",
-                str(ta_ver),
             ]
+            if ta_ver is not None:
+                cmd_digest += ["--ta-version", str(ta_ver)]
             subprocess.check_call(cmd_digest)
 
             # 2) Decode base64 payload
@@ -509,9 +509,10 @@ class OpteeTaSign(RawSign):
             sig_b64 = base64.b64encode(sig_raw)
             signed_artifact.write_bytes(sig_b64)
 
-            # 5) Save ta rollback version
+            # 5) Save ta rollback version (sign_encrypt.py defaults to 0 when
+            # --ta-version is omitted)
             ver_path = signed_artifact.with_suffix(".ver")
-            ver_path.write_text(str(ta_ver))
+            ver_path.write_text(str(ta_ver if ta_ver is not None else 0))
 
 
 class RpiSign(RawSign):
