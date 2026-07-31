@@ -77,26 +77,18 @@ def test_files_json(files_json):
                     FileEntry(
                         sig_type="efi",
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/gcdx64.efi"),
-                        embed=None,
-                        embed_offset=None,
                     ),
                     FileEntry(
                         sig_type="efi",
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi"),
-                        embed=None,
-                        embed_offset=None,
                     ),
                     FileEntry(
                         sig_type="efi",
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubnetx64-installer.efi"),
-                        embed=None,
-                        embed_offset=None,
                     ),
                     FileEntry(
                         sig_type="efi",
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubx64.efi"),
-                        embed=None,
-                        embed_offset=None,
                     ),
                 ],
             )
