@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Linutronix GmbH
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libmagic1t64
+      - run: pipx install pdm && pipx install invoke
+      - run: pdm install -d -G dev
+      - run: invoke lint
+
+  test-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx install pdm && pipx install invoke
+      - run: pdm install -d -G dev
+      - run: invoke test-unit
