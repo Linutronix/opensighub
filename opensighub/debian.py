@@ -164,9 +164,10 @@ class LocalPackagePool:
                     codename += suite_codename
                     if target.suffix:
                         codename += target.suffix
-                    sourceslist.write(
-                        f"deb [arch=amd64,arm64,armhf,i386] {target.url} {codename} main\n"
-                    )
+                    options = "arch=amd64,arm64,armhf,i386"
+                    if target.trusted:
+                        options += " trusted=yes"
+                    sourceslist.write(f"deb [{options}] {target.url} {codename} main\n")
 
             if self.config.archive_keyring:
                 os.symlink(
