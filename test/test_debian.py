@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from opensighub.cli import DebianRunConfig, sign_main
-from opensighub.debian import DebianSigningJob, FileEntry, FilesJson, Package
+from opensighub.debian import DebianSigningJob, FileEntry, FilesJson, LocalPackagePool, Package
 
 
 @pytest.fixture
@@ -94,3 +94,11 @@ def test_files_json(files_json):
             )
         },
     )
+
+
+def test_build_chdist_name_regular_suite():
+    assert LocalPackagePool.build_chdist_name("trixie", "local_test") == "local_test-trixie"
+
+
+def test_build_chdist_name_flat_suite_strips_trailing_slash():
+    assert LocalPackagePool.build_chdist_name("./", "local_test") == "local_test-."
