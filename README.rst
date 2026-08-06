@@ -53,6 +53,10 @@ Write a configuration file
          - url: http://localhost:8123  # e.g. a local test repo without a signed Release file
            trusted: true  # adds apt's [trusted=yes] option, skipping Release signature checks
 
+   # A --suite value ending in "/" (e.g. "osh debsign --suite ./ ...") addresses a flat,
+   # dists-less repository instead, as produced by a plain "dpkg-scanpackages . > Packages"
+   # served from that same directory.
+
    # Key(s) that signed the Release files of the archive
    archive-keyring: /etc/apt/trusted.gpg.d/debian-archive-trixie-stable.asc
 

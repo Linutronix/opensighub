@@ -116,7 +116,7 @@ class LocalPackagePool:
             "-a",
             architecture,
             "apt-get",
-            f"{suite}-{archive}",
+            self.build_chdist_name(suite, archive),
             "download",
             f"{pkg}={version}",
         ]
@@ -136,7 +136,7 @@ class LocalPackagePool:
         return unpack_dir
 
     def update_or_create_chdist(self, suite_codename: str, archive: str):
-        dist = f"{suite_codename}-{archive}"
+        dist = self.build_chdist_name(suite_codename, archive)
         sources_list_d = self.chdist_dir / dist / "etc" / "apt" / "sources.list"
         if (
             not os.path.isdir(self.chdist_dir)
@@ -167,7 +167,10 @@ class LocalPackagePool:
                     options = "arch=amd64,arm64,armhf,i386"
                     if target.trusted:
                         options += " trusted=yes"
-                    sourceslist.write(f"deb [{options}] {target.url} {codename} main\n")
+                    # a codename ending in "/" denotes a flat (dists-less) repository,
+                    # whose sources.list entry must not carry a component
+                    component = "" if codename.endswith("/") else " main"
+                    sourceslist.write(f"deb [{options}] {target.url} {codename}{component}\n")
 
             if self.config.archive_keyring:
                 os.symlink(
@@ -176,6 +179,10 @@ class LocalPackagePool:
                 )
 
         subprocess.check_call(["chdist", "-d", str(self.chdist_dir), "apt-get", dist, "update"])
+
+    @staticmethod
+    def build_chdist_name(suite_codename: str, archive: str) -> str:
+        return f"{archive}-{suite_codename.rstrip('/')}"
 
     @staticmethod
     def build_pkg_full_name(pkg: str, version: str, arch: str):
