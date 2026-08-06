@@ -124,3 +124,13 @@ def test_config(sample_config_yaml, sample_pin_file, repo_pubkey_file):
             )
         ),
     )
+
+
+def test_deb_archive_entry_trusted_default_false():
+    archive = Archive.from_dict({"deb": [{"url": "http://localhost:8123"}]})
+    assert archive.deb[0].trusted is False
+
+
+def test_deb_archive_entry_trusted_true():
+    archive = Archive.from_dict({"deb": [{"url": "http://localhost:8123", "trusted": True}]})
+    assert archive.deb[0].trusted is True

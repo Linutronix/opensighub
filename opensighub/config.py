@@ -44,6 +44,7 @@ class DebArchiveEntry:
     url: str
     prefix: str | None = None
     suffix: str | None = None
+    trusted: bool = False
 
 
 @dataclass
@@ -54,7 +55,12 @@ class Archive:
     def from_dict(cls, data: dict):
         return cls(
             deb=[
-                DebArchiveEntry(deb_dict["url"], deb_dict.get("prefix"), deb_dict.get("suffix"))
+                DebArchiveEntry(
+                    deb_dict["url"],
+                    deb_dict.get("prefix"),
+                    deb_dict.get("suffix"),
+                    deb_dict.get("trusted", False),
+                )
                 for deb_dict in data["deb"]
             ]
         )

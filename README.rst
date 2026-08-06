@@ -50,6 +50,8 @@ Write a configuration file
          - url: http://ftp.de.debian.org/debian
          - url: http://security.debian.org/debian-security
            suffix: "-security"  # appended to codename in generated sources.list
+         - url: http://localhost:8123  # e.g. a local test repo without a signed Release file
+           trusted: true  # adds apt's [trusted=yes] option, skipping Release signature checks
 
    # Key(s) that signed the Release files of the archive
    archive-keyring: /etc/apt/trusted.gpg.d/debian-archive-trixie-stable.asc
