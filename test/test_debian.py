@@ -4,10 +4,12 @@
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from opensighub.cli import DebianRunConfig, sign_main
+from opensighub.config import Config
 from opensighub.debian import DebianSigningJob, FileEntry, FilesJson, LocalPackagePool, Package
 
 
@@ -102,3 +104,33 @@ def test_build_chdist_name_regular_suite():
 
 def test_build_chdist_name_flat_suite_strips_trailing_slash():
     assert LocalPackagePool.build_chdist_name("./", "local_test") == "local_test-."
+
+
+def test_pool_skips_download_if_available():
+    cfg = Config(
+        archives={},
+        archive_keyring=None,
+        log_level=20,
+        signing_keys={},
+        trusted_certificates={},
+        uefi=None,
+        swu=None,
+        kernel_modules=None,
+        hab4=None,
+        optee_ta=None,
+        rpi=None,
+    )
+    pool = LocalPackagePool(cfg)
+    pool.download_pkg = MagicMock()
+    pool.extract_pkg = MagicMock(return_value=Path("/fake/extract/dir"))
+    job = DebianSigningJob(
+        archive_id="local",
+        suite_codename="./",
+        signing_template="foo-signed-template",
+        architecture="amd64",
+        version="1.0",
+    )
+    pool.download_and_extract_debian(job, ["foo-unsigned"])
+    pool.download_and_extract_debian(job, ["foo-unsigned"])
+    pool.download_pkg.assert_called_once()
+    pool.extract_pkg.assert_called_once()

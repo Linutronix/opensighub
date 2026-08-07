@@ -97,6 +97,8 @@ class LocalPackagePool:
 
     def download_and_extract_debian(self, job: DebianSigningJob, job_bin_packages: Iterable[str]):
         for package_name in job_bin_packages:
+            if package_name in self.dirs_by_pkgname:
+                continue
             self.download_pkg(
                 package_name,
                 job.version,
