@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from platformdirs import user_config_path
 
 from opensighub.config import Config
 from opensighub.debian import DebianSigningJob, DebianSigningProcessor
@@ -27,6 +28,8 @@ from opensighub.signers import (
     UefiVariableSignJob,
 )
 from opensighub.util import MultiprocessingCertCache
+
+DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
 
 @dataclass
@@ -206,7 +209,12 @@ def parse_args(arg_list: list[str] | None = None) -> BaseRunConfig:
     parser = argparse.ArgumentParser(
         description="Sign artifacts or packages according to various schemes."
     )
-    parser.add_argument("-c", "--config", help="Config file to load.")
+    parser.add_argument(
+        "-c",
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help=f"Config file to load. Defaults to {DEFAULT_CONFIG_PATH}.",
+    )
     parser.add_argument(
         "-p", "--parallel", help="Number of concurrent signing operations.", type=int, default=5
     )
