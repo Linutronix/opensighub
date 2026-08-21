@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 from platformdirs import user_config_path
 
+from opensighub import setup
 from opensighub.config import Config
 from opensighub.debian import DebianSigningJob, DebianSigningProcessor
 from opensighub.signers import (
@@ -35,7 +36,7 @@ DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
 
 @dataclass
-class BaseRunConfig:
+class SigningRunBase:
     config: Path
     output: Path
     parallel: int
@@ -48,7 +49,7 @@ class BaseRunConfig:
 
 
 @dataclass
-class DebianRunConfig(BaseRunConfig):
+class DebianRun(SigningRunBase):
     jobs: list[DebianSigningJob]
 
     def processor_factory(
@@ -79,7 +80,7 @@ class DebianRunConfig(BaseRunConfig):
 
 
 @dataclass
-class UefiVariableRunConfig(BaseRunConfig):
+class UefiVariableRun(SigningRunBase):
     jobs: list[UefiVariableSignJob]
 
     def processor_factory(
@@ -103,7 +104,7 @@ class UefiVariableRunConfig(BaseRunConfig):
 
 
 @dataclass
-class SwuRunConfig(BaseRunConfig):
+class SwuRun(SigningRunBase):
     jobs: list[SwuSignJob]
 
     def processor_factory(
@@ -127,7 +128,7 @@ class SwuRunConfig(BaseRunConfig):
 
 
 @dataclass
-class EfiBinaryRunConfig(BaseRunConfig):
+class EfiBinaryRun(SigningRunBase):
     jobs: list[UefiSignJob]
 
     def processor_factory(
@@ -148,6 +149,12 @@ class EfiBinaryRunConfig(BaseRunConfig):
             pool.sign(self.jobs)
 
         return process
+
+
+@dataclass
+class SetupRun:
+    config: Path
+    setup_command: str | None
 
 
 debian_example = """examples:
@@ -209,7 +216,7 @@ package build, pass --detached:
 """
 
 
-def parse_args(arg_list: list[str] | None = None) -> BaseRunConfig:
+def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     parser = argparse.ArgumentParser(
         description="Sign artifacts or packages according to various schemes."
     )
@@ -317,10 +324,26 @@ def parse_args(arg_list: list[str] | None = None) -> BaseRunConfig:
         help="One or more (U)EFI binaries to sign. Paths are absolute, or "
         "relative to the current working directory.",
     )
+    setup_parser = sub_parsers.add_parser(
+        "setup",
+        description="Set up user-local environment for osh to help getting started.",
+    )
+    setup_sub_parsers = setup_parser.add_subparsers(dest="setup_command")
+    setup_sub_parsers.add_parser(
+        "softhsm",
+        description="Set up an isolated, user-local SoftHSM token for test purpose.",
+    )
+    setup_sub_parsers.add_parser(
+        "testkeys",
+        description="Generate a self-signed test key in the local SoftHSM token for test purpose"
+        " and suitable configuration file.",
+    )
     args = parser.parse_args(arg_list)
+    if args.command == "setup":
+        return SetupRun(config=Path(args.config), setup_command=args.setup_command)
     if args.command == "swusign":
         outfile = Path(args.output) / Path(args.swu).name
-        return SwuRunConfig(
+        return SwuRun(
             config=Path(args.config),
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
@@ -329,7 +352,7 @@ def parse_args(arg_list: list[str] | None = None) -> BaseRunConfig:
         )
     if args.command == "efibinarysign":
         detached = args.detached
-        return EfiBinaryRunConfig(
+        return EfiBinaryRun(
             config=Path(args.config),
             output=Path(args.output),
             jobs=[
@@ -345,7 +368,7 @@ def parse_args(arg_list: list[str] | None = None) -> BaseRunConfig:
             force_overwrite=args.yes,
         )
     if args.command == "uefivarsign":
-        return UefiVariableRunConfig(
+        return UefiVariableRun(
             config=Path(args.config),
             output=Path(args.output),
             jobs=[
@@ -358,7 +381,7 @@ def parse_args(arg_list: list[str] | None = None) -> BaseRunConfig:
             force_overwrite=args.yes,
         )
     elif args.command == "debsign":
-        return DebianRunConfig(
+        return DebianRun(
             config=Path(args.config),
             output=Path(args.output),
             jobs=[
@@ -377,10 +400,8 @@ def parse_args(arg_list: list[str] | None = None) -> BaseRunConfig:
     raise NotImplementedError
 
 
-def sign_main(run_config: BaseRunConfig):
-    logging.basicConfig()
+def sign_main(run_config: SigningRunBase):
     logger = logging.getLogger("opensighub")
-    logger.setLevel(logging.INFO)
 
     if not run_config or run_config is NotImplementedError:
         return
@@ -399,9 +420,28 @@ def sign_main(run_config: BaseRunConfig):
             process()
 
 
+def run_setup(run_config: SetupRun):
+    if run_config.setup_command == "softhsm":
+        setup.setup_local_token(run_config.config)
+    elif run_config.setup_command == "testkeys":
+        setup.setup_testenv_keys(run_config.config)
+    else:
+        raise NotImplementedError
+
+
 def main():
+    logging.basicConfig(format="%(message)s")
+    logging.getLogger("opensighub").setLevel(logging.INFO)
+
+    run_config = parse_args()
+    setup.enable_local_softhsm2(run_config.config)
+
+    if isinstance(run_config, SetupRun):
+        run_setup(run_config)
+        return
+
     try:
-        sign_main(parse_args())
+        sign_main(run_config)
     except OpensighubError as e:
         print(f"osh: error: {e}", file=sys.stderr)
         sys.exit(1)

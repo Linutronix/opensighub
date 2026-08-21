@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from opensighub.cli import DebianRunConfig, sign_main
+from opensighub.cli import DebianRun, sign_main
 from opensighub.config import Config
 from opensighub.debian import (
     DebianSigningJob,
@@ -44,7 +44,7 @@ def files_json():
 def test_debian_org_sign_shim(tmp_path, softhsm, sample_config_yaml_file):
     """Sign shim from internet debian.org archive."""
     sign_main(
-        DebianRunConfig(
+        DebianRun(
             config=sample_config_yaml_file,
             output=tmp_path,
             jobs=[

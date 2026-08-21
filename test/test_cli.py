@@ -4,7 +4,7 @@
 
 from pathlib import Path
 
-from opensighub.cli import EfiBinaryRunConfig, UefiVariableRunConfig, parse_args
+from opensighub.cli import EfiBinaryRun, UefiVariableRun, parse_args
 from opensighub.signers import UefiSignJob, UefiVariableSignJob
 
 
@@ -19,7 +19,7 @@ def test_cli():
         "my_var_2:myvar2.bin",
     ]
     run_config = parse_args(argv)
-    assert run_config == UefiVariableRunConfig(
+    assert run_config == UefiVariableRun(
         config=Path("config.yaml"),
         jobs=[
             UefiVariableSignJob("my_var_1", Path("myvar1.bin"), Path("/test/dir/my_var_1.auth")),
@@ -42,7 +42,7 @@ def test_cli_efibinarysign_attached_default():
         "vmlinuz",
     ]
     run_config = parse_args(argv)
-    assert run_config == EfiBinaryRunConfig(
+    assert run_config == EfiBinaryRun(
         config=Path("config.yaml"),
         jobs=[
             UefiSignJob(Path("uki.efi"), Path("/test/dir/uki.efi"), detached=False),
@@ -65,7 +65,7 @@ def test_cli_efibinarysign_detached():
         "vmlinuz",
     ]
     run_config = parse_args(argv)
-    assert run_config == EfiBinaryRunConfig(
+    assert run_config == EfiBinaryRun(
         config=Path("config.yaml"),
         jobs=[
             UefiSignJob(Path("vmlinuz"), Path("/test/dir/vmlinuz.sig"), detached=True),
