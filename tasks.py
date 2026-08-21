@@ -16,6 +16,7 @@ def install_debian_dev(c: Context):
         "linux-headers-generic",
         "make",
         "lld",
+        "p11-kit",
         "p11-kit-modules",
         "pkcs11-provider",
         "sbsigntool",
