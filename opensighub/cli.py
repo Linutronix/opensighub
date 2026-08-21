@@ -326,6 +326,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     args = parser.parse_args(arg_list)
     if args.command == "setup":
         return SetupRun(config=Path(args.config), setup_command=args.setup_command)
+    if args.command in ("debsign", "uefivarsign", "swusign", "efibinarysign") and not args.output:
+        parser.error("the following arguments are required: -o/--output")
     if args.command == "swusign":
         outfile = Path(args.output) / Path(args.swu).name
         return SwuRun(
