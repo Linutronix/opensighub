@@ -175,9 +175,10 @@ class LocalPackagePool:
                     sourceslist.write(f"deb [{options}] {target.url} {codename}{component}\n")
 
             if self.config.archive_keyring:
+                keyring_name = "archive" + self.config.archive_keyring.suffix
                 os.symlink(
                     self.config.archive_keyring.absolute(),
-                    self.chdist_dir / dist / "etc" / "apt" / "trusted.gpg.d" / "archive.asc",
+                    self.chdist_dir / dist / "etc" / "apt" / "trusted.gpg.d" / keyring_name,
                 )
 
         subprocess.check_call(["chdist", "-d", str(self.chdist_dir), "apt-get", dist, "update"])
