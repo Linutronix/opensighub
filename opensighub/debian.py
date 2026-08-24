@@ -21,6 +21,7 @@ from opensighub.signers import (
     RpiSignJob,
     SigningPool,
     UefiSignJob,
+    confirm_overwrite,
 )
 
 logger = logging.getLogger("opensighub")
@@ -203,10 +204,12 @@ class DebianSigningProcessor:
         self,
         config: Config,
         spkg_out_dir: Path,
+        force_overwrite: bool = False,
     ):
         self.config: Config = config
         self.repo = LocalPackagePool(config)
         self.spkg_out_dir: Path = spkg_out_dir
+        self.force_overwrite = force_overwrite
         self.files_json_path: Path | None = None
         self.template_source_dir: Path | None = None
 
@@ -225,8 +228,14 @@ class DebianSigningProcessor:
             .strip()
         )
         dest_dir = self.spkg_out_dir / Path(source_name)
+        self._prepare_dest_dir(dest_dir)
         logger.info("Move extracted and signed source package to %s", dest_dir)
         shutil.move(self.template_source_dir, dest_dir)
+
+    def _prepare_dest_dir(self, dest_dir: Path) -> None:
+        if dest_dir.exists():
+            confirm_overwrite(dest_dir, self.force_overwrite)
+            shutil.rmtree(dest_dir)
 
     def _install_signing_template(
         self,

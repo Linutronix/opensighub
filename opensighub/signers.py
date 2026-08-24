@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Sequence
@@ -28,10 +29,33 @@ from opensighub.util import CertCache, Pkcs11Uri
 logger = logging.getLogger("opensighub")
 
 
+class OpensighubError(Exception):
+    """Failure that prevents execution of signing batch."""
+
+
+def confirm_overwrite(path: Path, force_overwrite: bool) -> None:
+    if force_overwrite:
+        return
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise OpensighubError(
+            f"Not overwriting '{path}' in non-interactive mode. Pass different --output "
+            "or -y/--yes."
+        )
+    try:
+        answer = input(f"osh: overwrite '{path}' (y/n)? ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() != "y":
+        raise OpensighubError(f"not overwriting '{path}'")
+
+
 @dataclass
 class SwuSignJob:
     artifact: Path
     signed_artifact: Path
+
+    def preflight(self, registry: "SignerRegistry") -> None:
+        registry.get_swu_signer().preflight(self)
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_swu_signer().sign(self.artifact, self.signed_artifact)
@@ -43,6 +67,9 @@ class UefiSignJob:
     signed_artifact: Path
     detached: bool = True
 
+    def preflight(self, registry: "SignerRegistry") -> None:
+        registry.get_uefi_signer().preflight(self)
+
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_uefi_signer().sign(self.artifact, self.signed_artifact, self.detached)
 
@@ -52,6 +79,9 @@ class UefiVariableSignJob:
     variable_name: str
     artifact: Path
     signed_artifact: Path
+
+    def preflight(self, registry: "SignerRegistry") -> None:
+        pass
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_uefi_variable_signer().sign(
@@ -65,6 +95,9 @@ class LinuxModuleSignJob:
     signed_artifact: Path
     detached: bool = True
 
+    def preflight(self, registry: "SignerRegistry") -> None:
+        pass
+
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_linux_module_signer().sign(self.artifact, self.signed_artifact, self.detached)
 
@@ -74,6 +107,9 @@ class Hab4SignJob:
     csf_txt_in_path: Path
     csf_bin_out_path: Path
     auth_data_prefix: Path
+
+    def preflight(self, registry: "SignerRegistry") -> None:
+        pass
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_hab4_signer().sign(
@@ -85,6 +121,9 @@ class Hab4SignJob:
 class RawSignJob:
     artifact: Path
     signed_artifact: Path
+
+    def preflight(self, registry: "SignerRegistry") -> None:
+        pass
 
 
 @dataclass
@@ -117,9 +156,22 @@ Job = (
 
 
 class UefiSign:
-    def __init__(self, cert_cache: CertCache, config: UefiSigningCfg):
+    def __init__(
+        self, cert_cache: CertCache, config: UefiSigningCfg, force_overwrite: bool = False
+    ):
         self.cert_cache: CertCache = cert_cache
         self.config = config
+        self.force_overwrite = force_overwrite
+
+    def preflight(self, job: UefiSignJob) -> None:
+        if job.artifact.resolve() == job.signed_artifact.resolve():
+            if job.detached:
+                print(
+                    f"Warning: '{job.signed_artifact}' will be overwritten by its own detached "
+                    "signature. Consider passing a different --output.",
+                    file=sys.stderr,
+                )
+            confirm_overwrite(job.signed_artifact, self.force_overwrite)
 
     def sign(self, artifact: Path, signed_artifact: Path, detached: bool = True):
         """Sign (U)EFI PE/Coff binaries with sbsign."""
@@ -154,6 +206,12 @@ class SwuSign:
     def __init__(self, cert_cache: CertCache, config: SwuSigningCfg):
         self.cert_cache: CertCache = cert_cache
         self.config = config
+
+    def preflight(self, job: SwuSignJob) -> None:
+        if job.artifact.resolve() == job.signed_artifact.resolve():
+            raise OpensighubError(
+                f"swusign cannot sign {job.signed_artifact} in place. Pass a different --output."
+            )
 
     def sign(self, artifact: Path, signed_artifact: Path, detached: bool = True):
         """Sign swu file"""
@@ -562,8 +620,8 @@ class RpiSign(RawSign):
 
 class SignerRegistry:
     """Gives each job typed access to exactly the signer it needs. Each job's
-    sign() takes the registry and calls its own get_xxx_signer(), so no lookup
-    anywhere needs to narrow or cast a signer's type."""
+    sign()/preflight() takes the registry and calls its own get_xxx_signer(),
+    so no lookup anywhere needs to narrow or cast a signer's type."""
 
     def __init__(
         self,
@@ -618,6 +676,9 @@ class SignerRegistry:
             raise ValueError("RPI signer not configured")
         return self._rpi_signer
 
+    def preflight(self, job: Job) -> None:
+        job.preflight(self)
+
     def sign(self, job: Job) -> None:
         job.sign(self)
 
@@ -646,5 +707,7 @@ class SigningPool:
         self.parallel = parallel
 
     def sign(self, jobs: Sequence[Job]):
+        for job in jobs:
+            self.registry.preflight(job)
         with Pool(processes=self.parallel) as p:
             p.map(self.registry.sign, jobs)

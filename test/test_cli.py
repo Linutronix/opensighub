@@ -27,6 +27,7 @@ def test_cli():
         ],
         output=Path("/test/dir"),
         parallel=5,
+        force_overwrite=False,
     )
 
 
@@ -49,6 +50,7 @@ def test_cli_efibinarysign_attached_default():
         ],
         output=Path("/test/dir"),
         parallel=5,
+        force_overwrite=False,
     )
 
 
@@ -70,4 +72,5 @@ def test_cli_efibinarysign_detached():
         ],
         output=Path("/test/dir"),
         parallel=5,
+        force_overwrite=False,
     )

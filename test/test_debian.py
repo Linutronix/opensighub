@@ -10,7 +10,15 @@ import pytest
 
 from opensighub.cli import DebianRunConfig, sign_main
 from opensighub.config import Config
-from opensighub.debian import DebianSigningJob, FileEntry, FilesJson, LocalPackagePool, Package
+from opensighub.debian import (
+    DebianSigningJob,
+    DebianSigningProcessor,
+    FileEntry,
+    FilesJson,
+    LocalPackagePool,
+    Package,
+)
+from opensighub.signers import OpensighubError
 
 
 @pytest.fixture
@@ -134,3 +142,31 @@ def test_pool_skips_download_if_available():
     pool.download_and_extract_debian(job, ["foo-unsigned"])
     pool.download_pkg.assert_called_once()
     pool.extract_pkg.assert_called_once()
+
+
+def test_prepare_dest_dir_overwrite_requires_confirmation(tmp_path):
+    cfg = Config(
+        archives={},
+        archive_keyring=None,
+        log_level=20,
+        signing_keys={},
+        trusted_certificates={},
+        uefi=None,
+        swu=None,
+        kernel_modules=None,
+        hab4=None,
+        optee_ta=None,
+        rpi=None,
+    )
+    dest_dir = tmp_path / "existing"
+    dest_dir.mkdir()
+    (dest_dir / "leftover.txt").touch()
+    processor = DebianSigningProcessor(cfg, tmp_path, force_overwrite=False)
+
+    with pytest.raises(OpensighubError):
+        processor._prepare_dest_dir(dest_dir)
+    assert dest_dir.exists()
+
+    processor.force_overwrite = True
+    processor._prepare_dest_dir(dest_dir)
+    assert not dest_dir.exists()
