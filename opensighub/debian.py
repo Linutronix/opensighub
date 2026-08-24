@@ -22,6 +22,7 @@ from opensighub.signers import (
     SigningPool,
     UefiSignJob,
 )
+from opensighub.util import OpensighubError, missing_tools
 
 logger = logging.getLogger("opensighub")
 
@@ -211,6 +212,8 @@ class DebianSigningProcessor:
         self.template_source_dir: Path | None = None
 
     def process(self, job: DebianSigningJob, pool: SigningPool):
+        if missing := missing_tools("chdist", "dpkg", "dpkg-parsechangelog"):
+            raise OpensighubError(f"{', '.join(missing)} not installed in PATH")
         self.repo.update_or_create_chdist(job.suite_codename, job.archive_id)
         self._install_signing_template(
             job.signing_template, job.version, job.architecture, job.suite_codename, job.archive_id

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import re
+import shutil
 import subprocess
 import tempfile
 from collections.abc import MutableMapping
@@ -11,6 +12,15 @@ from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import ClassVar
 from urllib.parse import parse_qsl, urlparse, urlunparse
+
+
+class OpensighubError(Exception):
+    """Expected failure that aborts osh with a plain error message instead
+    of a traceback; translated into one at the CLI entry point."""
+
+
+def missing_tools(*tools: str) -> list[str]:
+    return [tool for tool in tools if shutil.which(tool) is None]
 
 
 @dataclass
@@ -130,6 +140,8 @@ class CertCache:
         assert self.cert_pool
         pkcs11uri_id = (pkcs11uri.id, pkcs11uri.object)
         if pkcs11uri_id not in self.by_pkcs11_id_label:
+            if missing := missing_tools("p11tool"):
+                raise OpensighubError(f"{', '.join(missing)} not installed in PATH")
             with tempfile.NamedTemporaryFile(
                 delete=False, dir=self.cert_pool.name, suffix=".pem"
             ) as tmp_file:

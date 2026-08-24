@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 from platformdirs import user_data_path
 
-from opensighub.util import Pkcs11Uri, Pkcs11UriQattr
+from opensighub.util import OpensighubError, Pkcs11Uri, Pkcs11UriQattr, missing_tools
 
 logger = logging.getLogger("opensighub")
 
@@ -41,6 +41,8 @@ def enable_local_softhsm2(config_path: Path) -> None:
 
 
 def setup_local_token(config_path: Path) -> None:
+    if missing := missing_tools("softhsm2-util"):
+        raise OpensighubError(f"{', '.join(missing)} not installed in PATH")
     data_dir, softhsm2_conf, token_dir, pin_file = _osh_paths(config_path)
     data_dir.mkdir(parents=True, exist_ok=True)
     token_dir.mkdir(exist_ok=True)
@@ -112,6 +114,8 @@ def _login_uri(token_uri: Pkcs11Uri, pin_file: Path) -> str:
 
 
 def setup_testenv_keys(config_path: Path) -> None:
+    if missing := missing_tools("p11-kit", "openssl"):
+        raise OpensighubError(f"{', '.join(missing)} not installed in PATH")
     data_dir, softhsm2_conf, _, pin_file = _osh_paths(config_path)
     env = os.environ | {"SOFTHSM2_CONF": str(softhsm2_conf)}
     token_uri = Pkcs11Uri(token=SOFTHSM_LOCAL_TOKEN_LABEL)
