@@ -33,12 +33,18 @@ class SwuSignJob:
     artifact: Path
     signed_artifact: Path
 
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_swu_signer().sign(self.artifact, self.signed_artifact)
+
 
 @dataclass
 class UefiSignJob:
     artifact: Path
     signed_artifact: Path
     detached: bool = True
+
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_uefi_signer().sign(self.artifact, self.signed_artifact, self.detached)
 
 
 @dataclass
@@ -47,6 +53,11 @@ class UefiVariableSignJob:
     artifact: Path
     signed_artifact: Path
 
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_uefi_variable_signer().sign(
+            self.artifact, self.signed_artifact, self.variable_name
+        )
+
 
 @dataclass
 class LinuxModuleSignJob:
@@ -54,12 +65,20 @@ class LinuxModuleSignJob:
     signed_artifact: Path
     detached: bool = True
 
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_linux_module_signer().sign(self.artifact, self.signed_artifact, self.detached)
+
 
 @dataclass
 class Hab4SignJob:
     csf_txt_in_path: Path
     csf_bin_out_path: Path
     auth_data_prefix: Path
+
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_hab4_signer().sign(
+            self.csf_txt_in_path, self.csf_bin_out_path, self.auth_data_prefix
+        )
 
 
 @dataclass
@@ -73,11 +92,17 @@ class OpteeTaSignJob(RawSignJob):
     ta_type: str
     ta_ver: int | None
 
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_optee_ta_signer().sign(self.artifact, self.signed_artifact, self.ta_ver)
+
 
 @dataclass
 class RpiSignJob(RawSignJob):
     artifact: Path
     signed_artifact: Path
+
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_rpi_signer().sign(self.artifact, self.signed_artifact)
 
 
 Job = (
@@ -85,7 +110,6 @@ Job = (
     | UefiVariableSignJob
     | LinuxModuleSignJob
     | Hab4SignJob
-    | RawSignJob
     | RpiSignJob
     | OpteeTaSignJob
     | SwuSignJob
@@ -536,6 +560,68 @@ class RpiSign(RawSign):
             signature.write_text(f"{digest_hex}\nts: {ts}\nrsa2048: {sig_hex}\n")
 
 
+class SignerRegistry:
+    """Gives each job typed access to exactly the signer it needs. Each job's
+    sign() takes the registry and calls its own get_xxx_signer(), so no lookup
+    anywhere needs to narrow or cast a signer's type."""
+
+    def __init__(
+        self,
+        uefi_signer: UefiSign | None,
+        uefi_variable_signer: UefiVariableSign | None,
+        swu_signer: SwuSign | None,
+        linux_module_signer: LinuxModuleSign | None,
+        hab4_signer: Hab4Sign | None,
+        optee_ta_signer: OpteeTaSign | None,
+        rpi_signer: RpiSign | None,
+    ):
+        self._uefi_signer = uefi_signer
+        self._uefi_variable_signer = uefi_variable_signer
+        self._swu_signer = swu_signer
+        self._linux_module_signer = linux_module_signer
+        self._hab4_signer = hab4_signer
+        self._optee_ta_signer = optee_ta_signer
+        self._rpi_signer = rpi_signer
+
+    def get_uefi_signer(self) -> UefiSign:
+        if self._uefi_signer is None:
+            raise ValueError("UEFI signer not configured")
+        return self._uefi_signer
+
+    def get_uefi_variable_signer(self) -> UefiVariableSign:
+        if self._uefi_variable_signer is None:
+            raise ValueError("UEFI signer not configured")
+        return self._uefi_variable_signer
+
+    def get_swu_signer(self) -> SwuSign:
+        if self._swu_signer is None:
+            raise ValueError("SWU signer not configured")
+        return self._swu_signer
+
+    def get_linux_module_signer(self) -> LinuxModuleSign:
+        if self._linux_module_signer is None:
+            raise ValueError("Linux module signer not configured")
+        return self._linux_module_signer
+
+    def get_hab4_signer(self) -> Hab4Sign:
+        if self._hab4_signer is None:
+            raise ValueError("HAB4 signer not configured")
+        return self._hab4_signer
+
+    def get_optee_ta_signer(self) -> OpteeTaSign:
+        if self._optee_ta_signer is None:
+            raise ValueError("OPTEE TA signer not configured")
+        return self._optee_ta_signer
+
+    def get_rpi_signer(self) -> RpiSign:
+        if self._rpi_signer is None:
+            raise ValueError("RPI signer not configured")
+        return self._rpi_signer
+
+    def sign(self, job: Job) -> None:
+        job.sign(self)
+
+
 class SigningPool:
     def __init__(
         self,
@@ -548,59 +634,17 @@ class SigningPool:
         rpi_signer: RpiSign | None,
         parallel: int,
     ):
-        self.uefi_signer = uefi_signer
-        self.uefi_variable_signer = uefi_variable_signer
-        self.swu_signer = swu_signer
-        self.linux_module_signer = linux_module_signer
-        self.hab4_signer = hab4_signer
-        self.optee_ta_signer = optee_ta_signer
-        self.rpi_signer = rpi_signer
+        self.registry = SignerRegistry(
+            uefi_signer,
+            uefi_variable_signer,
+            swu_signer,
+            linux_module_signer,
+            hab4_signer,
+            optee_ta_signer,
+            rpi_signer,
+        )
         self.parallel = parallel
 
     def sign(self, jobs: Sequence[Job]):
         with Pool(processes=self.parallel) as p:
-            p.map(self._sign_specific, jobs)
-
-    def _sign_specific(self, job: Job):
-        match job:
-            case UefiSignJob():
-                if self.uefi_signer:
-                    self.uefi_signer.sign(job.artifact, job.signed_artifact, job.detached)
-                else:
-                    raise ValueError("UEFI signer not configured")
-            case UefiVariableSignJob():
-                if self.uefi_variable_signer:
-                    self.uefi_variable_signer.sign(
-                        job.artifact,
-                        job.signed_artifact,
-                        job.variable_name,
-                    )
-                else:
-                    raise ValueError("UEFI signer not configured")
-            case SwuSignJob():
-                if self.swu_signer:
-                    self.swu_signer.sign(job.artifact, job.signed_artifact)
-                else:
-                    raise ValueError("SWU signer not configured")
-            case LinuxModuleSignJob():
-                if self.linux_module_signer:
-                    self.linux_module_signer.sign(job.artifact, job.signed_artifact, job.detached)
-                else:
-                    raise ValueError("Linux module signer not configured")
-            case Hab4SignJob():
-                if self.hab4_signer:
-                    self.hab4_signer.sign(
-                        job.csf_txt_in_path, job.csf_bin_out_path, job.auth_data_prefix
-                    )
-                else:
-                    raise ValueError("HAB4 signer not configured")
-            case OpteeTaSignJob():
-                if self.optee_ta_signer:
-                    self.optee_ta_signer.sign(job.artifact, job.signed_artifact, job.ta_ver)
-                else:
-                    raise ValueError("OPTEE TA signer not configured")
-            case RpiSignJob():
-                if self.rpi_signer:
-                    self.rpi_signer.sign(job.artifact, job.signed_artifact)
-                else:
-                    raise ValueError("RPI signer not configured")
+            p.map(self.registry.sign, jobs)
