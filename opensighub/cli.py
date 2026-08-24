@@ -5,6 +5,7 @@
 import argparse
 import logging
 import multiprocessing
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ from opensighub.debian import DebianSigningJob, DebianSigningProcessor
 from opensighub.signers import (
     Hab4Sign,
     LinuxModuleSign,
+    OpensighubError,
     OpteeTaSign,
     RpiSign,
     SigningPool,
@@ -38,6 +40,7 @@ class SigningRunBase:
     config: Path
     output: Path
     parallel: int
+    force_overwrite: bool
 
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
@@ -57,7 +60,7 @@ class DebianRun(SigningRunBase):
             Path(self.output),
         )
         worker = SigningPool(
-            UefiSign(cert_cache, config.uefi) if config.uefi else None,
+            UefiSign(cert_cache, config.uefi, self.force_overwrite) if config.uefi else None,
             None,  # UefiVariableSign
             None,  # SwuSign
             LinuxModuleSign(cert_cache, config.kernel_modules) if config.kernel_modules else None,
@@ -131,7 +134,7 @@ class EfiBinaryRun(SigningRunBase):
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
         pool = SigningPool(
-            UefiSign(cert_cache, config.uefi) if config.uefi else None,
+            UefiSign(cert_cache, config.uefi, self.force_overwrite) if config.uefi else None,
             None,  # uefi_variable_signer
             None,  # swu_signer
             None,  # linux_module_signer
@@ -225,7 +228,18 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     parser.add_argument(
         "-p", "--parallel", help="Number of concurrent signing operations.", type=int, default=5
     )
-    parser.add_argument("-o", "--output", help="Directory where to place signed files.")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=".",
+        help="Directory where to place signed files. Defaults to current working directory.",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Answer y/n confirmation prompts with 'y' instead of asking or aborting.",
+    )
     sub_parsers = parser.add_subparsers(dest="command")
     debsign_parser = sub_parsers.add_parser(
         "debsign",
@@ -335,6 +349,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
             parallel=args.parallel,
+            force_overwrite=args.yes,
         )
     if args.command == "efibinarysign":
         detached = args.detached
@@ -351,6 +366,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
                 for binary in args.binaries
             ],
             parallel=args.parallel,
+            force_overwrite=args.yes,
         )
     if args.command == "uefivarsign":
         return UefiVariableRun(
@@ -363,6 +379,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
                 for name, blob in (v.split(":") for v in args.variables)
             ],
             parallel=args.parallel,
+            force_overwrite=args.yes,
         )
     elif args.command == "debsign":
         return DebianRun(
@@ -379,6 +396,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
                 for template in args.templates
             ],
             parallel=args.parallel,
+            force_overwrite=args.yes,
         )
     raise NotImplementedError
 
@@ -421,8 +439,13 @@ def main():
 
     if isinstance(run_config, SetupRun):
         run_setup(run_config)
-    else:
+        return
+
+    try:
         sign_main(run_config)
+    except OpensighubError as e:
+        print(f"osh: error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
