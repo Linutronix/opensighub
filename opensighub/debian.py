@@ -18,7 +18,6 @@ from opensighub.signers import (
     Hab4SignJob,
     LinuxModuleSignJob,
     OpteeTaSignJob,
-    RawSignJob,
     RpiSignJob,
     SigningPool,
     UefiSignJob,
@@ -264,7 +263,7 @@ class DebianSigningProcessor:
 
     def _make_job(
         self, pkg_name: str, file: FileEntry
-    ) -> Hab4SignJob | LinuxModuleSignJob | UefiSignJob | RawSignJob | OpteeTaSignJob | RpiSignJob:
+    ) -> Hab4SignJob | LinuxModuleSignJob | UefiSignJob | OpteeTaSignJob | RpiSignJob:
         assert self.template_source_dir is not None
         pkg_dir = self.repo.dirs_by_pkgname[pkg_name].extract_dir
         rel_file = file.file.relative_to("/") if file.file.is_absolute() else file.file
