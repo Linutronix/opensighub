@@ -21,7 +21,7 @@ def install_debian_dev(c: Context):
         "pkcs11-provider",
         "sbsigntool",
         "softhsm2",
-        "uuidgen-runtime",
+        "uuid-runtime",
     ]
     c.run(f"apt install {' '.join(packages)}")
 
@@ -30,6 +30,12 @@ def install_debian_dev(c: Context):
 def build_signables(c: Context):
     print("Building minimal signable binaries for test")
     c.run("make -C test/signables")
+
+
+@task(aliases=("rq",))
+def record_quickstart(c: Context):
+    print("Rendering README Quick Start demo GIF")
+    c.run("pdm run python -m vhs docs/quickstart.tape")
 
 
 @task(aliases=("tu",))
