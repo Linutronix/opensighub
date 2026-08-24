@@ -5,7 +5,7 @@
 import pytest
 
 from opensighub.setup import setup_testenv_keys
-from opensighub.signers import OpensighubError
+from opensighub.util import OpensighubError
 
 
 def test_setup_testenv_keys_requires_softhsm_setup_first(tmp_path, monkeypatch):

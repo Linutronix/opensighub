@@ -19,7 +19,6 @@ from opensighub.debian import DebianSigningJob, DebianSigningProcessor
 from opensighub.signers import (
     Hab4Sign,
     LinuxModuleSign,
-    OpensighubError,
     OpteeTaSign,
     RpiSign,
     SigningPool,
@@ -30,7 +29,7 @@ from opensighub.signers import (
     UefiVariableSign,
     UefiVariableSignJob,
 )
-from opensighub.util import MultiprocessingCertCache
+from opensighub.util import MultiprocessingCertCache, OpensighubError
 
 DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
@@ -436,11 +435,10 @@ def main():
     run_config = parse_args()
     setup.enable_local_softhsm2(run_config.config)
 
-    if isinstance(run_config, SetupRun):
-        run_setup(run_config)
-        return
-
     try:
+        if isinstance(run_config, SetupRun):
+            run_setup(run_config)
+            return
         sign_main(run_config)
     except OpensighubError as e:
         print(f"osh: error: {e}", file=sys.stderr)

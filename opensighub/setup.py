@@ -11,8 +11,7 @@ from pathlib import Path
 import yaml
 from platformdirs import user_data_path
 
-from opensighub.signers import OpensighubError
-from opensighub.util import Pkcs11Uri, Pkcs11UriQattr
+from opensighub.util import OpensighubError, Pkcs11Uri, Pkcs11UriQattr, raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
 
@@ -42,6 +41,7 @@ def enable_local_softhsm2(config_path: Path) -> None:
 
 
 def setup_local_token(config_path: Path) -> None:
+    raise_if_tool_missing("softhsm2-util")
     data_dir, softhsm2_conf, token_dir, pin_file = _osh_paths(config_path)
     data_dir.mkdir(parents=True, exist_ok=True)
     token_dir.mkdir(exist_ok=True)
@@ -113,6 +113,7 @@ def _login_uri(token_uri: Pkcs11Uri, pin_file: Path) -> str:
 
 
 def setup_testenv_keys(config_path: Path) -> None:
+    raise_if_tool_missing("p11-kit", "openssl")
     data_dir, softhsm2_conf, _, pin_file = _osh_paths(config_path)
     if not pin_file.exists() or not config_path.exists():
         raise OpensighubError("Run 'osh setup softhsm' first.")

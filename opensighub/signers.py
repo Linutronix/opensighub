@@ -24,13 +24,9 @@ from opensighub.config import (
     SwuSigningCfg,
     UefiSigningCfg,
 )
-from opensighub.util import CertCache, Pkcs11Uri
+from opensighub.util import CertCache, OpensighubError, Pkcs11Uri, raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
-
-
-class OpensighubError(Exception):
-    """Failure that prevents execution of signing batch."""
 
 
 def confirm_overwrite(path: Path, force_overwrite: bool) -> None:
@@ -81,7 +77,7 @@ class UefiVariableSignJob:
     signed_artifact: Path
 
     def preflight(self, registry: "SignerRegistry") -> None:
-        pass
+        registry.get_uefi_variable_signer().preflight(self)
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_uefi_variable_signer().sign(
@@ -96,7 +92,7 @@ class LinuxModuleSignJob:
     detached: bool = True
 
     def preflight(self, registry: "SignerRegistry") -> None:
-        pass
+        registry.get_linux_module_signer().preflight(self)
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_linux_module_signer().sign(self.artifact, self.signed_artifact, self.detached)
@@ -109,7 +105,7 @@ class Hab4SignJob:
     auth_data_prefix: Path
 
     def preflight(self, registry: "SignerRegistry") -> None:
-        pass
+        registry.get_hab4_signer().preflight(self)
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_hab4_signer().sign(
@@ -122,14 +118,14 @@ class RawSignJob:
     artifact: Path
     signed_artifact: Path
 
-    def preflight(self, registry: "SignerRegistry") -> None:
-        pass
-
 
 @dataclass
 class OpteeTaSignJob(RawSignJob):
     ta_type: str
     ta_ver: int | None
+
+    def preflight(self, registry: "SignerRegistry") -> None:
+        registry.get_optee_ta_signer().preflight(self)
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_optee_ta_signer().sign(self.artifact, self.signed_artifact, self.ta_ver)
@@ -139,6 +135,9 @@ class OpteeTaSignJob(RawSignJob):
 class RpiSignJob(RawSignJob):
     artifact: Path
     signed_artifact: Path
+
+    def preflight(self, registry: "SignerRegistry") -> None:
+        registry.get_rpi_signer().preflight(self)
 
     def sign(self, registry: "SignerRegistry") -> None:
         registry.get_rpi_signer().sign(self.artifact, self.signed_artifact)
@@ -164,6 +163,7 @@ class UefiSign:
         self.force_overwrite = force_overwrite
 
     def preflight(self, job: UefiSignJob) -> None:
+        raise_if_tool_missing("sbsign")
         if job.artifact.resolve() == job.signed_artifact.resolve():
             if job.detached:
                 print(
@@ -208,6 +208,7 @@ class SwuSign:
         self.config = config
 
     def preflight(self, job: SwuSignJob) -> None:
+        raise_if_tool_missing("swugenerator")
         if job.artifact.resolve() == job.signed_artifact.resolve():
             raise OpensighubError(
                 f"swusign cannot sign {job.signed_artifact} in place. Pass a different --output."
@@ -243,6 +244,9 @@ class UefiVariableSign:
     def __init__(self, cert_cache: CertCache, config: UefiSigningCfg):
         self.cert_cache: CertCache = cert_cache
         self.config = config
+
+    def preflight(self, job: UefiVariableSignJob) -> None:
+        raise_if_tool_missing("sbvarsign")
 
     def sign(self, artifact: Path, signed_artifact: Path, variable_name: str):
         """Sign arbitrary data blob as UEFI authenticated variable with sbvarsign.
@@ -297,6 +301,9 @@ class LinuxModuleSign:
         self.cert_cache: CertCache = cert_cache
         self.config = config
 
+    def preflight(self, job: LinuxModuleSignJob) -> None:
+        raise_if_tool_missing("sign-file")
+
     def sign(self, artifact: Path, signed_artifact: Path, detached: bool = True):
         """Sign a Linux Kernel module (*.ko) with sign-file.
 
@@ -334,6 +341,9 @@ class Hab4Sign:
     def __init__(self, cert_cache: CertCache, config: Hab4SigningCfg):
         self.cert_cache: CertCache = cert_cache
         self.config = config
+
+    def preflight(self, job: Hab4SignJob) -> None:
+        raise_if_tool_missing("srktool", "cst")
 
     def make_srktable(self, output_dir: Path) -> Path:
         """Create a temporary SRK table blob from public key certificates.
@@ -466,6 +476,9 @@ class RawSign:
         self.cert_cache: CertCache = cert_cache
         self.config = config
 
+    def preflight(self, job: RawSignJob) -> None:
+        raise_if_tool_missing("openssl")
+
     def pkeyopt_args(self) -> list[str]:
         cfg = self.config
         args = [
@@ -536,6 +549,9 @@ class RawSign:
 
 
 class OpteeTaSign(RawSign):
+    def preflight(self, job: RawSignJob) -> None:
+        raise_if_tool_missing("openssl", "sign_encrypt.py")
+
     def sign(self, artifact: Path, signed_artifact: Path, ta_ver: int | None) -> None:
         """
         Creates optee-specific digest signature for trusted application.
@@ -556,8 +572,7 @@ class OpteeTaSign(RawSign):
             sig_bin = tmpdir / "sig.bin"
 
             tool = shutil.which("sign_encrypt.py")
-            if not tool:
-                raise FileNotFoundError("sign_encrypt.py not found in PATH")
+            assert tool is not None
 
             # 1) Create optee specific digest
             cmd_digest = [

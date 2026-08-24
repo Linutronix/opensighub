@@ -23,6 +23,7 @@ from opensighub.signers import (
     UefiSignJob,
     confirm_overwrite,
 )
+from opensighub.util import raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
 
@@ -214,6 +215,7 @@ class DebianSigningProcessor:
         self.template_source_dir: Path | None = None
 
     def process(self, job: DebianSigningJob, pool: SigningPool):
+        raise_if_tool_missing("chdist", "dpkg", "dpkg-parsechangelog")
         self.repo.update_or_create_chdist(job.suite_codename, job.archive_id)
         self._install_signing_template(
             job.signing_template, job.version, job.architecture, job.suite_codename, job.archive_id
