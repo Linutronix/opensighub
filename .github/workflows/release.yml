@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Linutronix GmbH
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - "prepare_*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx install pdm
+      - name: Check tag matches pyproject.toml version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pyproject_version="$(pdm show --version 2>/dev/null)"
+          if [ "$tag_version" != "$pyproject_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match pyproject.toml version $pyproject_version"
+            exit 1
+          fi
+      - run: pdm build
+      - run: pipx install twine && twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
