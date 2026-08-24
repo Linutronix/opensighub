@@ -4,7 +4,7 @@
 
 [project]
 name = "opensighub"
-version = "0.2.0"
+version = "0.3.0a1"
 license = "GPL-3.0-or-later AND 0BSD"
 license-files = ["LICENSES/*.txt"]
 description = "OpenSigHub wraps different code signing tools and schemes in a common CLI"
