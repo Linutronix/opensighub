@@ -8,6 +8,7 @@ import multiprocessing
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 
 import yaml
@@ -217,6 +218,9 @@ package build, pass --detached:
 def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     parser = argparse.ArgumentParser(
         description="Sign artifacts or packages according to various schemes."
+    )
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"%(prog)s {version('opensighub')}"
     )
     parser.add_argument(
         "-c",
