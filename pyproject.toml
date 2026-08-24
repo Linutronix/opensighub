@@ -50,4 +50,5 @@ dev = [
     "pytest-cov~=6.0.0",
     "reuse>=6.2.0",
     "types-PyYAML",
+    "vhs~=1.1",
 ]
