@@ -126,7 +126,7 @@ def sample_rpi_boot_file(project_root_path):
 
 @pytest.fixture
 def repo_pubkey_file(project_root_path):
-    return project_root_path / "trusted.d" / "debian-archive-trixie-stable.asc"
+    return project_root_path / "test" / "trusted.d" / "debian-archive-trixie-stable.asc"
 
 
 @pytest.fixture
