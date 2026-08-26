@@ -76,7 +76,8 @@ class FilesJson:
         return cls(
             version=int(data.get("version", 2)),
             packages={
-                purl: Package.from_dict(package) for purl, package in data.get("packages").items()
+                pkg_name: Package.from_dict(package)
+                for pkg_name, package in data.get("packages").items()
             },
         )
 
