@@ -7,7 +7,7 @@ import logging
 import multiprocessing
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
 
@@ -51,6 +51,8 @@ class SigningRunBase:
 @dataclass
 class DebianRun(SigningRunBase):
     jobs: list[DebianSigningJob]
+    run_sbuild: bool = False
+    sbuild_args: list[str] = field(default_factory=list)
 
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
@@ -58,6 +60,8 @@ class DebianRun(SigningRunBase):
         debian_processor = DebianSigningProcessor(
             config,
             Path(self.output),
+            self.run_sbuild,
+            self.sbuild_args,
             self.force_overwrite,
         )
         worker = SigningPool(
@@ -167,13 +171,14 @@ tree with detached signatures under /tmp/signed:
     osh --config /etc/osh/config.yaml --output /tmp/signed debsign \\
          --archive debian_org --suite trixie --version 6.12.41-1 \\
          --architecture amd64 \\
-         linux-image-amd64-signed-template
+         --build \\
+         linux-image-amd64-signed-template -- --no-clean-source
 
 The exact type of signatures (EFI in case of the linux kernel) and to-be-signed
 files (boot/vmlinuz in case of the linux kernel) is determined by a files.json
-included in signed-template. Only a final sbuild (or debuild, dpkg-buildpackage,
-...) run will attach the signatures and create the signed /boot/vmlinuz. This is
-*not* done by osh, but left to the user.
+included in signed-template. A final sbuild run will attach the signatures and
+create the signed /boot/vmlinuz. Extra arguments after a literal '--' are passed
+through to that sbuild call verbatim.
 """
 
 
@@ -216,6 +221,22 @@ package build, pass --detached:
 """
 
 
+class PassthroughParser(argparse.ArgumentParser):
+    def __init__(self, *args, passthrough: bool = False, **kwargs):
+        self._passthrough = passthrough
+        super().__init__(*args, **kwargs)
+
+    def parse_known_args(self, args=None, namespace=None):
+        passthrough_args: list[str] = []
+        if self._passthrough and args and "--" in args:
+            sep = args.index("--")
+            args, passthrough_args = args[:sep], args[sep + 1 :]
+        namespace, extras = super().parse_known_args(args, namespace)
+        if self._passthrough:
+            namespace.passthrough_args = passthrough_args
+        return namespace, extras
+
+
 def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     parser = argparse.ArgumentParser(
         description="Sign artifacts or packages according to various schemes."
@@ -244,12 +265,13 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
         action="store_true",
         help="Answer y/n confirmation prompts with 'y' instead of asking or aborting.",
     )
-    sub_parsers = parser.add_subparsers(dest="command")
+    sub_parsers = parser.add_subparsers(dest="command", parser_class=PassthroughParser)
     debsign_parser = sub_parsers.add_parser(
         "debsign",
         description="Sign a package from an apt archive.",
         epilog=debian_example,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        passthrough=True,
     )
     debsign_parser.add_argument(
         "--archive",
@@ -279,6 +301,12 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
         help="One or more Debian signed-template binary packages. For each, a "
         "sub directory with the name of the new signed source package name "
         "as per debian/changelog will be created under the output directory.",
+    )
+    debsign_parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Build the signed source package using sbuild to final deb. Default: False. "
+        "Extra arguments after a literal '--' are passed through to sbuild.",
     )
     uefi_parser = sub_parsers.add_parser(
         "uefivarsign",
@@ -344,6 +372,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     args = parser.parse_args(arg_list)
     if args.command == "setup":
         return SetupRun(config=Path(args.config), setup_command=args.setup_command)
+    if args.command == "debsign" and args.passthrough_args and not args.build:
+        parser.error("arguments after '--' require debsign --build")
     if args.command == "swusign":
         outfile = Path(args.output) / Path(args.swu).name
         return SwuRun(
@@ -399,6 +429,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
             ],
             parallel=args.parallel,
             force_overwrite=args.yes,
+            run_sbuild=args.build,
+            sbuild_args=args.passthrough_args,
         )
     raise NotImplementedError
 

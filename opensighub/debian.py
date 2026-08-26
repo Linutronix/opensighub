@@ -206,17 +206,24 @@ class DebianSigningProcessor:
         self,
         config: Config,
         spkg_out_dir: Path,
+        run_sbuild: bool = False,
+        sbuild_args: list[str] | None = None,
         force_overwrite: bool = False,
     ):
         self.config: Config = config
         self.repo = LocalPackagePool(config)
-        self.spkg_out_dir: Path = spkg_out_dir
+        self.spkg_out_dir: Path = spkg_out_dir.resolve()
+        self.run_sbuild = run_sbuild
+        self.sbuild_args = sbuild_args or []
         self.force_overwrite = force_overwrite
         self.files_json_path: Path | None = None
         self.template_source_dir: Path | None = None
 
     def process(self, job: DebianSigningJob, pool: SigningPool):
-        raise_if_tool_missing("chdist", "dpkg", "dpkg-parsechangelog")
+        tools = ["chdist", "dpkg", "dpkg-parsechangelog"]
+        if self.run_sbuild:
+            tools.append("sbuild")
+        raise_if_tool_missing(*tools)
         self.repo.update_or_create_chdist(job.suite_codename, job.archive_id)
         self._install_signing_template(
             job.signing_template, job.version, job.architecture, job.suite_codename, job.archive_id
@@ -234,6 +241,28 @@ class DebianSigningProcessor:
         self._prepare_dest_dir(dest_dir)
         logger.info("Move extracted and signed source package to %s", dest_dir)
         shutil.move(self.template_source_dir, dest_dir)
+        if self.run_sbuild:
+            self._run_sbuild(job, dest_dir)
+
+    def _run_sbuild(self, job: DebianSigningJob, source_dir: Path) -> None:
+        """Build the signed source package with sbuild and same apt repositories used to download and sign."""
+        dist = self.repo.build_chdist_name(job.suite_codename, job.archive_id)
+        sources_list = self.repo.chdist_dir / dist / "etc" / "apt" / "sources.list"
+        cmd = ["sbuild", "--chroot-mode=unshare"]
+        for line in sources_list.read_text().splitlines():
+            if line.strip():
+                cmd.append(f"--extra-repository={line}")
+        if self.config.archive_keyring:
+            keyring_copy = self.spkg_out_dir / (
+                "archive-keyring" + self.config.archive_keyring.suffix
+            )
+            shutil.copyfile(self.config.archive_keyring, keyring_copy)
+            cmd.append(f"--extra-repository-key={keyring_copy.name}")
+        cmd.extend(self.sbuild_args)
+        cmd.append(str(source_dir))
+        logger.info("Running sbuild for %s", source_dir)
+        logger.debug("%s", " ".join(cmd))
+        subprocess.check_call(cmd, cwd=self.spkg_out_dir)
 
     def _prepare_dest_dir(self, dest_dir: Path) -> None:
         if dest_dir.exists():

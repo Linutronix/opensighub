@@ -4,7 +4,10 @@
 
 from pathlib import Path
 
-from opensighub.cli import EfiBinaryRun, UefiVariableRun, parse_args
+import pytest
+
+from opensighub.cli import DebianRun, EfiBinaryRun, UefiVariableRun, parse_args
+from opensighub.debian import DebianSigningJob
 from opensighub.signers import UefiSignJob, UefiVariableSignJob
 
 
@@ -52,6 +55,69 @@ def test_cli_efibinarysign_attached_default():
         parallel=5,
         force_overwrite=False,
     )
+
+
+def test_cli_debsign_build_passes_through_sbuild_args():
+    argv = [
+        "--config",
+        "config.yaml",
+        "--output",
+        "/test/dir",
+        "debsign",
+        "--archive",
+        "debian_org",
+        "--suite",
+        "trixie",
+        "--version",
+        "1.0",
+        "--architecture",
+        "amd64",
+        "--build",
+        "foo-signed-template",
+        "--",
+        "--no-clean-source",
+    ]
+    run_config = parse_args(argv)
+    assert run_config == DebianRun(
+        config=Path("config.yaml"),
+        jobs=[
+            DebianSigningJob(
+                signing_template="foo-signed-template",
+                version="1.0",
+                architecture="amd64",
+                suite_codename="trixie",
+                archive_id="debian_org",
+            ),
+        ],
+        output=Path("/test/dir"),
+        parallel=5,
+        force_overwrite=False,
+        run_sbuild=True,
+        sbuild_args=["--no-clean-source"],
+    )
+
+
+def test_cli_debsign_sbuild_args_require_build():
+    argv = [
+        "--config",
+        "config.yaml",
+        "--output",
+        "/test/dir",
+        "debsign",
+        "--archive",
+        "debian_org",
+        "--suite",
+        "trixie",
+        "--version",
+        "1.0",
+        "--architecture",
+        "amd64",
+        "foo-signed-template",
+        "--",
+        "--no-clean-source",
+    ]
+    with pytest.raises(SystemExit):
+        parse_args(argv)
 
 
 def test_cli_efibinarysign_detached():
