@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from opensighub.cli import DebianRun, EfiBinaryRun, UefiVariableRun, parse_args
+from opensighub.cli import DebianRun, EfiBinaryRun, UefiVariableRun, parse_args, sign_main
 from opensighub.debian import DebianSigningJob
 from opensighub.signers import UefiSignJob, UefiVariableSignJob
+from opensighub.util import OpensighubError
 
 
 def test_cli():
@@ -55,6 +56,18 @@ def test_cli_efibinarysign_attached_default():
         parallel=5,
         force_overwrite=False,
     )
+
+
+def test_sign_main_missing_config_raises_opensighub_error(tmp_path):
+    run_config = EfiBinaryRun(
+        config=tmp_path / "nonexistent-config.yaml",
+        output=tmp_path,
+        jobs=[],
+        parallel=5,
+        force_overwrite=False,
+    )
+    with pytest.raises(OpensighubError, match="Could not read config file"):
+        sign_main(run_config)
 
 
 def test_cli_debsign_build_passes_through_sbuild_args():

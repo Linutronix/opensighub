@@ -441,9 +441,12 @@ def sign_main(run_config: SigningRunBase):
     if not run_config or run_config is NotImplementedError:
         return
 
-    with open(run_config.config) as fp:
-        cfg_dict = yaml.safe_load(fp)
-        config = Config.from_dict(cfg_dict)
+    try:
+        with open(run_config.config) as fp:
+            cfg_dict = yaml.safe_load(fp)
+    except OSError as e:
+        raise OpensighubError(f"Could not read config file: {e}") from e
+    config = Config.from_dict(cfg_dict)
 
     logger.setLevel(config.log_level)
 
