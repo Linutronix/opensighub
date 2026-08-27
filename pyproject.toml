@@ -7,7 +7,7 @@ name = "opensighub"
 version = "0.2.0"
 license = "GPL-3.0-or-later AND 0BSD"
 license-files = ["LICENSES/*.txt"]
-description = "OpenSigHub wraps different code signing tools and schemes in a common CLI"
+description = "OpenSigHub signs boot and operating system artifacts like UEFI Secure Boot, NXP HAB4 or swupdate files"
 readme = "README.md"
 authors = [
     {name = "Linutronix GmbH", email = "info@linutronix.de"},
@@ -17,14 +17,25 @@ dependencies = [
     "platformdirs~=4.0",
 ]
 requires-python = ">= 3.11"
+keywords = ["code-signing", "pkcs11", "hsm", "secure-boot", "uefi", "debian", "embedded", "swupdate"]
 classifiers = [
-  "Programming Language :: Python"
+  "Intended Audience :: System Administrators",
+  "Intended Audience :: Developers",
+  "Topic :: Security :: Cryptography",
+  "Topic :: Software Development :: Embedded Systems",
+  "Topic :: System :: Boot",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 
 [project.urls]
 Homepage = "https://github.com/Linutronix/opensighub"
 Repository = "https://github.com/Linutronix/opensighub"
 Issues = "https://github.com/Linutronix/opensighub/issues"
+Documentation = "https://github.com/Linutronix/opensighub/blob/main/docs/user-manual.md"
 
 [project.scripts]
 osh = "opensighub.cli:main"
