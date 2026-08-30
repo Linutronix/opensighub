@@ -112,6 +112,7 @@ def test_uefi_variable_sign_cli(softhsm, sample_config_yaml_file, sample_blob, t
                 ),
             ],
             parallel=5,
+            force_overwrite=False,
         )
     )
     assert signed_artifact.is_file()
