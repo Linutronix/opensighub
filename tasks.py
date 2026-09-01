@@ -11,6 +11,7 @@ def install_debian_dev(c: Context):
     packages = [
         "clang",
         "devscripts",
+        "gnutls-bin",
         "imx-code-signing-tool",
         "libengine-pkcs11-openssl",
         "linux-headers-generic",
