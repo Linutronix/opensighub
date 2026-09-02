@@ -1,0 +1,11 @@
+Source: opensighub-test-package-signed
+Section: misc
+Priority: optional
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.0
+
+Package: opensighub-test-package-signed
+Architecture: amd64
+Depends: ${misc:Depends}
+Description: opensighub signed test package
+ Code-signing artifacts signed by opensighub integration test.
