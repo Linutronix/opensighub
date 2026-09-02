@@ -183,20 +183,8 @@ def swu_file(project_root_path):
 
 
 @pytest.fixture
-def sample_config_yaml(sample_pin_file, repo_pubkey_file):
-    return f"""---
-log-level: DEBUG
-
-archives:
-  debian_org:
-    deb:
-      - url: http://ftp.de.debian.org/debian
-      - url: http://security.debian.org/debian-security
-        suffix: "-security"
-
-archive-keyring: {repo_pubkey_file}
-
-trusted-certificates:
+def signing_config_yaml_block(sample_pin_file):
+    return f"""trusted-certificates:
   acme-2025-hab4-srk1:
     pkcs11_uri: "pkcs11:token=SoftHSM;object=habSRK1CA;type=cert"
   acme-2025-hab4-srk2:
@@ -251,6 +239,57 @@ rpi:
 swu:
   key: acme-2025-swu
 """
+
+
+@pytest.fixture
+def sample_config_yaml(repo_pubkey_file, signing_config_yaml_block):
+    return f"""---
+log-level: DEBUG
+
+archives:
+  debian_org:
+    deb:
+      - url: http://ftp.de.debian.org/debian
+      - url: http://security.debian.org/debian-security
+        suffix: "-security"
+
+archive-keyring: {repo_pubkey_file}
+
+{signing_config_yaml_block}"""
+
+
+@pytest.fixture
+def apt_signing_archive(build_dir):
+    archive_dir = build_dir / "apt-signing-archive"
+    _assert_build(archive_dir / "Packages")
+    return archive_dir
+
+
+@pytest.fixture
+def debian_config_yaml_file(
+    tmp_path, repo_pubkey_file, apt_signing_archive, signing_config_yaml_block
+):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        f"""---
+log-level: DEBUG
+
+archives:
+  debian_org:
+    deb:
+      - url: http://ftp.de.debian.org/debian
+      - url: http://security.debian.org/debian-security
+        suffix: "-security"
+  local_test:
+    deb:
+      - url: file://{apt_signing_archive}
+        trusted: true
+
+archive-keyring: {repo_pubkey_file}
+
+{signing_config_yaml_block}"""
+    )
+    return cfg_file
 
 
 @pytest.fixture

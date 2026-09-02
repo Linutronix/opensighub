@@ -8,8 +8,6 @@
 .pybuild/
 .venv/
 __pycache__/
-
-# Softlink to Debian repository
-debian
+/debian/
 
 test/build/

@@ -1,0 +1,5 @@
+opensighub-test-package-signed (1.0) unstable; urgency=medium
+
+  * Test input for opensighub integration tests.
+
+ -- Linutronix GmbH <info@linutronix.de>  Mon, 01 Jan 2024 00:00:00 +0000

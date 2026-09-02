@@ -1,0 +1,7 @@
+Package: opensighub-test-package-unsigned
+Version: 1.0-1
+Architecture: amd64
+Section: misc
+Priority: optional
+Description:  opensighub unsigned test package
+ Minimal set of code-signing artifacts intended for opensighub integration test.

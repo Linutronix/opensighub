@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "packages": {
+    "opensighub-test-package-unsigned": {
+      "trusted_certs": [],
+      "files": [
+        {
+          "sig_type": "efi",
+          "file": "/boot/efi/test/minimal.efi"
+        },
+        {
+          "sig_type": "hab4",
+          "file": "/boot/hab4/test/minimal_hab4_csf.txt"
+        },
+        {
+          "sig_type": "linux-module",
+          "file": "/lib/modules/test/minimal.ko"
+        }
+      ]
+    }
+  }
+}
