@@ -59,7 +59,40 @@ def project_root_path(request):
 
 
 @pytest.fixture
-def softhsm(project_root_path):
+def softhsm2_conf(tmp_path, monkeypatch):
+    token_dir = tmp_path / "softhsm2-tokens"
+    token_dir.mkdir()
+    conf_file = tmp_path / "softhsm2.conf"
+    conf_file.write_text(
+        f"directories.tokendir = {token_dir}\nobjectstore.backend = file\nlog.level = INFO\n"
+    )
+    monkeypatch.setenv("SOFTHSM2_CONF", str(conf_file))
+
+    openssl_conf = tmp_path / "openssl.cnf"
+    openssl_conf.write_text("""\
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+pkcs11 = pkcs11_sect
+
+[default_sect]
+activate = 1
+
+[pkcs11_sect]
+activate = 1
+pkcs11-module-block-operations = digest
+""")
+    monkeypatch.setenv("OPENSSL_CONF", str(openssl_conf))
+
+    return conf_file
+
+
+@pytest.fixture
+def softhsm(softhsm2_conf, project_root_path):
     cmd = [
         "softhsm2-util",
         "--init-token",
@@ -72,11 +105,7 @@ def softhsm(project_root_path):
         "5678",
     ]
     subprocess.check_call(cmd)
-    try:
-        subprocess.check_call([project_root_path / "test" / "scripts" / "enroll_test_pki.sh"])
-        yield
-    finally:
-        subprocess.check_call(["softhsm2-util", "--delete-token", "--token", "SoftHSM"])
+    subprocess.check_call([project_root_path / "test" / "scripts" / "enroll_test_pki.sh"])
 
 
 @pytest.fixture
