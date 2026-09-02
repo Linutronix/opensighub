@@ -1,0 +1,7 @@
+Package: opensighub-test-package-signed-template
+Version: 1.0-1
+Architecture: amd64
+Section: misc
+Priority: optional
+Description: opensighub signed test package
+ Code-signing artifacts signed by opensighub in integration test.

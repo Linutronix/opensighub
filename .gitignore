@@ -11,7 +11,4 @@
 __pycache__/
 /dist/
 
-# Softlink to Debian repository
-debian
-
 test/build/
