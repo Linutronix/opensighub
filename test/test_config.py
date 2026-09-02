@@ -19,8 +19,8 @@ from opensighub.config import (
 )
 
 
-def test_config(sample_config_yaml, sample_pin_file, repo_pubkey_file):
-    cfg_dict = yaml.safe_load(sample_config_yaml)
+def test_config(unit_config_yaml, sample_pin_file, repo_pubkey_file):
+    cfg_dict = yaml.safe_load(unit_config_yaml)
     cfg = Config.from_dict(cfg_dict)
     assert cfg == Config(
         {

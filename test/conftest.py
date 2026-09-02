@@ -13,6 +13,12 @@ import yaml
 from opensighub.config import Config
 
 
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if not any(m.name in ("integration", "live") for m in item.iter_markers()):
+            item.add_marker(pytest.mark.unit)
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--sign-file-path",
@@ -242,7 +248,7 @@ swu:
 
 
 @pytest.fixture
-def sample_config_yaml(repo_pubkey_file, signing_config_yaml_block):
+def unit_config_yaml(repo_pubkey_file, signing_config_yaml_block):
     return f"""---
 log-level: DEBUG
 
@@ -266,12 +272,8 @@ def apt_signing_archive(build_dir):
 
 
 @pytest.fixture
-def debian_config_yaml_file(
-    tmp_path, repo_pubkey_file, apt_signing_archive, signing_config_yaml_block
-):
-    cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text(
-        f"""---
+def integration_config_yaml(repo_pubkey_file, apt_signing_archive, signing_config_yaml_block):
+    return f"""---
 log-level: DEBUG
 
 archives:
@@ -280,7 +282,7 @@ archives:
       - url: http://ftp.de.debian.org/debian
       - url: http://security.debian.org/debian-security
         suffix: "-security"
-  local_test:
+  local:
     deb:
       - url: file://{apt_signing_archive}
         trusted: true
@@ -288,18 +290,16 @@ archives:
 archive-keyring: {repo_pubkey_file}
 
 {signing_config_yaml_block}"""
-    )
-    return cfg_file
 
 
 @pytest.fixture
-def sample_config_yaml_file(tmp_path, sample_config_yaml):
+def integration_config_yaml_file(tmp_path, integration_config_yaml):
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text(sample_config_yaml)
+    cfg_file.write_text(integration_config_yaml)
     return cfg_file
 
 
 @pytest.fixture
-def sample_config(sample_config_yaml):
-    cfg_dict = yaml.safe_load(sample_config_yaml)
+def integration_config(integration_config_yaml):
+    cfg_dict = yaml.safe_load(integration_config_yaml)
     return Config.from_dict(cfg_dict)

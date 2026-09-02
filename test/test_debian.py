@@ -41,10 +41,10 @@ def files_json():
 
 
 @pytest.mark.integration
-def test_debsign(tmp_path, softhsm, debian_config_yaml_file):
+def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
         DebianRun(
-            config=debian_config_yaml_file,
+            config=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 DebianSigningJob(
@@ -52,7 +52,7 @@ def test_debsign(tmp_path, softhsm, debian_config_yaml_file):
                     version="1.0-1",
                     architecture="amd64",
                     suite_codename="./",
-                    archive_id="local_test",
+                    archive_id="local",
                 ),
             ],
             parallel=5,
@@ -70,12 +70,11 @@ def test_debsign(tmp_path, softhsm, debian_config_yaml_file):
     assert signed == {"minimal.efi.sig", "minimal_hab4_csf.txt.sig", "minimal.ko.sig"}
 
 
-@pytest.mark.integration
-@pytest.mark.external
-def test_debian_org_sign_and_build_shim(tmp_path, softhsm, debian_config_yaml_file):
+@pytest.mark.live
+def test_debian_org_sign_and_build_shim(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
         DebianRun(
-            config=debian_config_yaml_file,
+            config=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 DebianSigningJob(

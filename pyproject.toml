@@ -42,7 +42,9 @@ opensighub = "opensighub.cli:main"
 
 [tool.pytest.ini_options]
 markers = [
-    "integration: tests requiring native signing tools, a SoftHSM token, and/or network access to external repositories",
+    "integration: tests requiring native signing tools and/or a SoftHSM token",
+    "live: tests against external services for compatibility, not suited for isolated environments",
+    "unit: tests not marked integration or live; applied automatically, do not set explicitly",
 ]
 
 [tool.ruff]
