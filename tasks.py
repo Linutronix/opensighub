@@ -21,6 +21,7 @@ def install_debian_dev(c: Context):
         "pkcs11-provider",
         "sbsigntool",
         "softhsm2",
+        "swugenerator",
         "uuid-runtime",
     ]
     c.run(f"apt install {' '.join(packages)}")
