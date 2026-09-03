@@ -38,7 +38,7 @@ Issues = "https://github.com/Linutronix/opensighub/issues"
 Documentation = "https://github.com/Linutronix/opensighub/blob/main/docs/user-manual.md"
 
 [project.scripts]
-osh = "opensighub.cli:main"
+opensighub = "opensighub.cli:main"
 
 [tool.pytest.ini_options]
 markers = [

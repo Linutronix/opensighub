@@ -15,21 +15,21 @@ subcommands, `config.yaml` in full, and what to install for real use.
 Every subcommand shares `-c/--config` (default:
 `$XDG_CONFIG_HOME/opensighub/config.yaml`, usually
 `~/.config/opensighub/config.yaml`), `-p/--parallel`, and `-o/--output`
-(default: current directory). Run `osh <command> --help` for the full option
+(default: current directory). Run `opensighub <command> --help` for the full option
 list and examples of each; only a summary is given here.
 
-- `osh debsign TEMPLATE...` — the high-level Debian workflow described below:
+- `opensighub debsign TEMPLATE...` — the high-level Debian workflow described below:
   download one or more `*-signed-template` packages plus their dependencies,
   sign the files they list, and write out a signed source package tree per
   template.
-- `osh efibinarysign BINARY...` — sign (U)EFI PE/COFF binaries with sbsign.
+- `opensighub efibinarysign BINARY...` — sign (U)EFI PE/COFF binaries with sbsign.
   By default the signature is embedded (a directly bootable/verifiable
   binary); with `--detached` a `.sig` file is produced instead.
-- `osh uefivarsign NAME:BLOB...` — sign an arbitrary data blob as a UEFI
+- `opensighub uefivarsign NAME:BLOB...` — sign an arbitrary data blob as a UEFI
   authenticated variable with sbvarsign, e.g. for `db`/`dbx`/`KEK`/`PK`
   updates.
-- `osh swusign FILE` — sign or resign a swupdate `.swu` file.
-- `osh setup softhsm` / `osh setup testkeys` — set up an isolated, user-local
+- `opensighub swusign FILE` — sign or resign a swupdate `.swu` file.
+- `opensighub setup softhsm` / `opensighub setup testkeys` — set up an isolated, user-local
   SoftHSM token and a self-signed test key in it, for the quickstart. Not
   meant for production keys.
 
@@ -37,19 +37,19 @@ list and examples of each; only a summary is given here.
 
 `--output` defaults to the current directory, so a signed file can end up
 overwriting its own input if `--output` isn't set explicitly (e.g. running
-`osh efibinarysign` in the same directory as the input, or with
-`--output .`). `osh` reacts differently depending on what that actually does:
+`opensighub efibinarysign` in the same directory as the input, or with
+`--output .`). `opensighub` reacts differently depending on what that actually does:
 
 - `swusign`: signing in place is not possible (the underlying tool truncates
-  the output before reading the input), so `osh` always refuses with an
+  the output before reading the input), so `opensighub` always refuses with an
   error.
 - `efibinarysign` without `--detached`: signing in place works and produces a
   valid signed replacement, but silently discards the unsigned original, so
-  `osh` asks for interactive confirmation (in the style of `cp -i`/`rm -i`).
+  `opensighub` asks for interactive confirmation (in the style of `cp -i`/`rm -i`).
   Outside a terminal (e.g. in a pipeline) it refuses instead of guessing.
 - `efibinarysign --detached`: the output would contain only the detached
   signature, not the binary, so signing in place would destroy the artifact
-  for no usable result; `osh` always refuses.
+  for no usable result; `opensighub` always refuses.
 - `uefivarsign`, kernel module, HAB4, OPTEE TA, and RPi boot container
   signing have no realistic in-place collision and are unaffected.
 
@@ -70,7 +70,7 @@ archives:
 
 # Key(s) that signed the archive's Release files, used to verify downloads.
 # Any keyring format apt's trusted.gpg.d accepts (binary .gpg/.pgp or
-# ASCII-armored .asc) works; the extension is preserved when osh links it in.
+# ASCII-armored .asc) works; the extension is preserved when opensighub links it in.
 archive-keyring: /usr/share/keyrings/debian-archive-keyring.gpg
 
 # Available signing keys, referenced by name from the sections below.
@@ -86,12 +86,12 @@ trusted-certificates:
 
 log-level: INFO   # DEBUG, INFO, WARNING, ERROR, ...
 
-# Files listed as type "efi" in files.json, and "osh efibinarysign", are
+# Files listed as type "efi" in files.json, and "opensighub efibinarysign", are
 # signed with this key. The public key certificate's PKCS#11 URI is derived
 # automatically by replacing type=cert in the key's URI.
 uefi:
   key: acme-2025-uefi
-  variables:            # optional, for "osh uefivarsign"
+  variables:            # optional, for "opensighub uefivarsign"
     db:
       key: acme-2025-uefi
       attributes: ["NON_VOLATILE", "BOOTSERVICE_ACCESS", "RUNTIME_ACCESS", "TIME_BASED_AUTHENTICATED_WRITE_ACCESS"]
@@ -123,30 +123,30 @@ rpi:
   hash: sha256
   padding: pkcs1
 
-# osh swusign uses this key.
+# opensighub swusign uses this key.
 swu:
   key: acme-2025-uefi
 ```
 
 A signing key's PKCS#11 URI needs to carry its PIN somehow. Two forms are
-understood, both by libp11/pkcs11-provider and by osh itself:
+understood, both by libp11/pkcs11-provider and by opensighub itself:
 
 - `pin-source=/path/to/file` (recommended): PIN is read from a text file
   (must not contain a trailing newline).
 - `pin-value=plaintext`: PIN embedded directly in the URI.
 
-Note that `p11-kit`'s own CLI (used by `osh setup testkeys` to generate the
+Note that `p11-kit`'s own CLI (used by `opensighub setup testkeys` to generate the
 quickstart test key) only understands `pin-value` or an interactive terminal
 prompt for `--login`, not `pin-source` — this only matters if you use
 `p11-kit` yourself to provision keys.
 
-A `--suite` value ending in `/` (e.g. `osh debsign --suite trixie/ ...`)
+A `--suite` value ending in `/` (e.g. `opensighub debsign --suite trixie/ ...`)
 addresses a flat, `dists`-less repository instead, as produced by a plain
 `dpkg-scanpackages . > Packages` served from that same directory.
 
 ## The `debsign` workflow
 
-`osh debsign` downloads and extracts one or more `*-signed-template` Debian
+`opensighub debsign` downloads and extracts one or more `*-signed-template` Debian
 binary packages. By convention, a `-signed-template` package provides a
 `debian/` skeleton for the final signed source package, plus a
 `files.json` that lists the binary packages providing the actual
@@ -163,10 +163,10 @@ package, which files to sign and how.
 | `optee-ta-core`  | `optee_ta`            | OpteeTaSign (sign_encrypt.py) |
 | `rpi-boot`       | `rpi`                 | RpiSign (raw RSA via OpenSSL) |
 
-If `files.json` lists a `sig_type` whose section isn't configured, `osh
+If `files.json` lists a `sig_type` whose section isn't configured, `opensighub
 debsign` fails with an error naming the missing section.
 
-The result of `osh debsign` is an extracted source package tree under
+The result of `opensighub debsign` is an extracted source package tree under
 `--output`. For example, signing `linux-image-amd64-signed-template` from
 the official Debian archive produces (tree redacted to files relevant to
 signing):
@@ -203,7 +203,7 @@ sbuild /tmp/signed/linux-signed-amd64
 
 ## System Dependencies
 
-`osh` shells out to native tools rather than reimplementing cryptographic
+`opensighub` shells out to native tools rather than reimplementing cryptographic
 signing. OpenSSL must be able to load a PKCS#11 module; installing `libp11`
 and `p11-kit` is normally enough, as most PKCS#11 modules register
 themselves with p11-kit automatically. If not, see p11-kit's [manual
@@ -217,10 +217,10 @@ guide](https://p11-glue.github.io/p11-glue/p11-kit/manual/pkcs11-conf.html#confi
 | cst (IMX Code Signing Tool) | Backs Hab4Sign (HABv4/AHAB). `hab_csf_parser` is used by integration tests. | imx-code-signing-tool |
 | OpenSSL | All backends eventually call into libssl; forwards to an HSM via the engine API (deprecated) or the newer provider API. | openssl, libssl3 |
 | GnuTLS | `p11tool` downloads public key certificates from a PKCS#11 module for use during signing. | gnutls-bin |
-| p11-kit | Default PKCS#11 module (`libp11-kit.so.0`) loaded by libp11 and pkcs11-provider; also used directly by `osh setup`. | libp11-kit0, p11-kit-modules |
+| p11-kit | Default PKCS#11 module (`libp11-kit.so.0`) loaded by libp11 and pkcs11-provider; also used directly by `opensighub setup`. | libp11-kit0, p11-kit-modules |
 | libp11 (OpenSC) | `libengine-pkcs11-openssl` provides the OpenSSL engine used for raw RSA signing (OPTEE TA, RPi) and, on older toolchains, for other backends. | libengine-pkcs11-openssl |
 | pkcs11-provider | Newer sbsign/sign-file versions use OpenSSL's provider API instead of the engine API. | pkcs11-provider |
-| SoftHSM v2 | Emulates an HSM, used by `osh setup` and for testing. | softhsm2 |
+| SoftHSM v2 | Emulates an HSM, used by `opensighub setup` and for testing. | softhsm2 |
 | swugenerator | Backs SwuSign (swupdate `.swu` files); version 0.6-1 or higher required. | swugenerator (trixie's main archive only has 0.4-1; use trixie-backports or pip) |
 | sign_encrypt.py | Backs OpteeTaSign (OPTEE trusted applications); found under `optee_source/scripts/` in an OP-TEE checkout. | not packaged, ships with OP-TEE |
 | rpi-eeprom | Used by integration tests to verify RPi boot containers. | not packaged, see [raspberrypi/rpi-eeprom](https://github.com/raspberrypi/rpi-eeprom) |

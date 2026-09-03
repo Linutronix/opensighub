@@ -4,10 +4,10 @@
 
 Output docs/quickstart.gif
 
-Require osh
+Require opensighub
 
-Env XDG_CONFIG_HOME "/tmp/osh-quickstart-demo/config"
-Env XDG_DATA_HOME "/tmp/osh-quickstart-demo/data"
+Env XDG_CONFIG_HOME "/tmp/opensighub-quickstart-demo/config"
+Env XDG_DATA_HOME "/tmp/opensighub-quickstart-demo/data"
 
 Set Shell "bash"
 Set FontSize 20
@@ -16,15 +16,15 @@ Set Height 650
 Set Padding 20
 Set TypingSpeed 40ms
 
-Type "osh setup softhsm"
+Type "opensighub setup softhsm"
 Enter
 Sleep 2s
 
-Type "osh setup testkeys"
+Type "opensighub setup testkeys"
 Enter
 Sleep 3s
 
-Type "osh --output /tmp/signed debsign \"
+Type "opensighub --output /tmp/signed debsign \"
 Enter
 Type "    --archive debian-trixie --suite trixie --version 257.13-1~deb13u1 \"
 Enter
