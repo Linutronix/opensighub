@@ -8,7 +8,6 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -48,6 +47,7 @@ class FileEntry:
 class Package:
     trusted_certs: list[str]
     files: list[FileEntry]
+    version: str | None = None
 
     @classmethod
     def from_dict(cls, data):
@@ -61,6 +61,7 @@ class Package:
                 )
                 for f in data.get("files")
             ],
+            version=data.get("version"),
         )
 
 
@@ -97,18 +98,21 @@ class LocalPackagePool:
         self.chdist_dir = self.download_dir / "chdist"
         self.dirs_by_pkgname: dict[str, PkgInfo] = {}
 
-    def download_and_extract_debian(self, job: DebianSigningJob, job_bin_packages: Iterable[str]):
-        for package_name in job_bin_packages:
+    def download_and_extract_debian(
+        self, job: DebianSigningJob, job_bin_packages: dict[str, Package]
+    ):
+        for package_name, package in job_bin_packages.items():
             if package_name in self.dirs_by_pkgname:
                 continue
+            version = package.version if package.version is not None else job.version
             self.download_pkg(
                 package_name,
-                job.version,
+                version,
                 job.suite_codename,
                 job.architecture,
                 job.archive_id,
             )
-            extracted_dir = self.extract_pkg(package_name, job.version, job.architecture)
+            extracted_dir = self.extract_pkg(package_name, version, job.architecture)
             self.dirs_by_pkgname[package_name] = PkgInfo(extracted_dir, package_name)
 
     def download_pkg(self, pkg: str, version: str, suite: str, architecture: str, archive: str):
@@ -296,7 +300,7 @@ class DebianSigningProcessor:
         jobs = []
         with open(self.files_json_path, "r") as f:
             files = FilesJson.from_dict(json.load(f))
-            self.repo.download_and_extract_debian(job, files.packages.keys())
+            self.repo.download_and_extract_debian(job, files.packages)
             for pkg_name, pkg_data in files.packages.items():
                 for file in pkg_data.files:
                     jobs.append(self._make_job(pkg_name, file))
