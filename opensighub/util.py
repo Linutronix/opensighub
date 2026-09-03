@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlparse, urlunparse
 
 
 class OpensighubError(Exception):
-    """Expected failure that aborts osh with a plain error message instead
+    """Expected failure that aborts opensighub with a plain error message instead
     of a traceback; translated into one at the CLI entry point."""
 
 

@@ -10,7 +10,7 @@ SPDX-License-Identifier: 0BSD
 
 ```
 pdm install
-pdm run osh --help
+pdm run opensighub --help
 ```
 
 `pdm install` also installs the `dev` dependency group (ruff, mypy, pytest,
@@ -31,11 +31,11 @@ table](user-manual.md#system-dependencies), plus a few build tools test
 signables need. `invoke build-signables` then builds the minimal test
 binaries under `test/signables/` used by the test suite.
 
-Note that `osh`'s own quickstart (`osh setup softhsm`/`osh setup testkeys`,
+Note that `opensighub`'s own quickstart (`opensighub setup softhsm`/`opensighub setup testkeys`,
 see the [Quick Start](../README.md#quick-start)) is unrelated to this
 `invoke` tooling: it's a shipped subcommand available to any `pip`/`pipx`
 install, whereas `tasks.py` (and `invoke` itself) is a dev-only dependency
-never packaged with `osh`.
+never packaged with `opensighub`.
 
 ## Tasks
 

@@ -39,14 +39,14 @@ sudo apt install softhsm2 p11-kit libengine-pkcs11-openssl sbsigntool \
 Set up configuration for user-local SoftHSM token and keys test key in it
 
 ```
-osh setup softhsm
-osh setup testkeys
+opensighub setup softhsm
+opensighub setup testkeys
 ```
 
 Sign systemd-boot from the Debian archive with your own key
 
 ```
-osh --output ./signed debsign \
+opensighub --output ./signed debsign \
     --archive debian-trixie --suite trixie --version 257.13-1~deb13u1 \
     --architecture amd64 \
     --build \

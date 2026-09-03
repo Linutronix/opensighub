@@ -38,7 +38,7 @@ def confirm_overwrite(path: Path, force_overwrite: bool) -> None:
             "or -y/--yes."
         )
     try:
-        answer = input(f"osh: overwrite '{path}' (y/n)? ")
+        answer = input(f"opensighub: overwrite '{path}' (y/n)? ")
     except EOFError:
         answer = ""
     if answer.strip().lower() != "y":

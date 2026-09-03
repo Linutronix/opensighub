@@ -21,7 +21,7 @@ SOFTHSM_LOCAL_SO_PIN = "5678"
 SOFTHSM_TEST_UEFI_KEY_LABEL = "opensighub-test"
 
 
-def _osh_paths(config_path: Path) -> tuple[Path, Path, Path, Path]:
+def _opensighub_paths(config_path: Path) -> tuple[Path, Path, Path, Path]:
     data_dir = user_data_path("opensighub")
     return (
         data_dir,
@@ -35,19 +35,19 @@ DEBIAN_ARCHIVE_KEYRING = Path("/usr/share/keyrings/debian-archive-keyring.gpg")
 
 
 def enable_local_softhsm2(config_path: Path) -> None:
-    _, softhsm2_conf, _, _ = _osh_paths(config_path)
+    _, softhsm2_conf, _, _ = _opensighub_paths(config_path)
     if softhsm2_conf.exists():
         os.environ["SOFTHSM2_CONF"] = str(softhsm2_conf)
 
 
 def setup_local_token(config_path: Path) -> None:
     raise_if_tool_missing("softhsm2-util")
-    data_dir, softhsm2_conf, token_dir, pin_file = _osh_paths(config_path)
+    data_dir, softhsm2_conf, token_dir, pin_file = _opensighub_paths(config_path)
     data_dir.mkdir(parents=True, exist_ok=True)
     token_dir.mkdir(exist_ok=True)
     softhsm2_conf.parent.mkdir(parents=True, exist_ok=True)
     if not softhsm2_conf.exists():
-        logger.info(f"Writing osh-specific local SoftHSM configuration to {softhsm2_conf}")
+        logger.info(f"Writing opensighub-specific local SoftHSM configuration to {softhsm2_conf}")
         softhsm2_conf.write_text(
             f"directories.tokendir = {token_dir}\nobjectstore.backend = file\nlog.level = INFO\n"
         )
@@ -102,7 +102,7 @@ def setup_local_token(config_path: Path) -> None:
         logger.warning(f"{config_path} already exists, leaving it untouched")
 
     logger.info(
-        f"Done. SOFTHSM2_CONF={softhsm2_conf} will be automatically loaded when running osh."
+        f"Done. SOFTHSM2_CONF={softhsm2_conf} will be automatically loaded when running opensighub."
     )
 
 
@@ -114,9 +114,9 @@ def _login_uri(token_uri: Pkcs11Uri, pin_file: Path) -> str:
 
 def setup_testenv_keys(config_path: Path) -> None:
     raise_if_tool_missing("p11-kit", "openssl")
-    data_dir, softhsm2_conf, _, pin_file = _osh_paths(config_path)
+    data_dir, softhsm2_conf, _, pin_file = _opensighub_paths(config_path)
     if not pin_file.exists() or not config_path.exists():
-        raise OpensighubError("Run 'osh setup softhsm' first.")
+        raise OpensighubError("Run 'opensighub setup softhsm' first.")
     env = os.environ | {"SOFTHSM2_CONF": str(softhsm2_conf)}
     token_uri = Pkcs11Uri(token=SOFTHSM_LOCAL_TOKEN_LABEL)
 

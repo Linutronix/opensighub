@@ -163,12 +163,12 @@ class SetupRun:
 
 debian_example = """examples:
 
-To read configuration from /etc/osh/config.yaml from, download and sign the
+To read configuration from /etc/opensighub/config.yaml from, download and sign the
 architecture specific (amd64) signed-template Debian package
 linux-image-amd64-signed-template version 6.12.41-1, and output a source package
 tree with detached signatures under /tmp/signed:
 
-    osh --config /etc/osh/config.yaml --output /tmp/signed debsign \\
+    opensighub --config /etc/opensighub/config.yaml --output /tmp/signed debsign \\
          --archive debian_org --suite trixie --version 6.12.41-1 \\
          --architecture amd64 \\
          --build \\
@@ -184,10 +184,10 @@ through to that sbuild call verbatim.
 
 uefivarsign_example = """examples:
 
-To read configuration from /etc/osh/config.yaml and sign the data blob mydata.bin
+To read configuration from /etc/opensighub/config.yaml and sign the data blob mydata.bin
 as UEFI variable named mydata
 
-    osh --config /etc/osh/config.yaml --output /tmp/signed uefivarsign \\
+    opensighub --config /etc/opensighub/config.yaml --output /tmp/signed uefivarsign \\
          mydata1:mydata1.bin mydata2:mydata2.bin
 
 Optional details for the signing process (like attributes to attach to mydata variable
@@ -196,27 +196,27 @@ or which GUID to assign) will be looked up in config.yaml.
 
 swusign_example = """examples:
 
-To read configuration from /etc/osh/config.yaml and sign the swu file my.swu
+To read configuration from /etc/opensighub/config.yaml and sign the swu file my.swu
 
-    osh --config /etc/osh/config.yaml --output /tmp/signed swusign \\
+    opensighub --config /etc/opensighub/config.yaml --output /tmp/signed swusign \\
          my.swu
 """
 
 efibinarysign_example = """examples:
 
-To read configuration from /etc/osh/config.yaml and sign the (U)EFI PE/COFF
+To read configuration from /etc/opensighub/config.yaml and sign the (U)EFI PE/COFF
 binaries uki.efi and vmlinuz, writing signed binaries /tmp/signed/uki.efi and
 /tmp/signed/vmlinuz that can be booted or verified directly, e.g. with
 'sbverify --cert cert.pem /tmp/signed/uki.efi':
 
-    osh --config /etc/osh/config.yaml --output /tmp/signed efibinarysign \\
+    opensighub --config /etc/opensighub/config.yaml --output /tmp/signed efibinarysign \\
          uki.efi vmlinuz
 
 To instead produce detached signatures (e.g. /tmp/signed/vmlinuz.sig), as used
 by the Debian signing flow where the signature is attached later during the
 package build, pass --detached:
 
-    osh --config /etc/osh/config.yaml --output /tmp/signed efibinarysign \\
+    opensighub --config /etc/opensighub/config.yaml --output /tmp/signed efibinarysign \\
          --detached vmlinuz
 """
 
@@ -275,7 +275,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     )
     debsign_parser.add_argument(
         "--archive",
-        help="Refers to archive mapping from config file. osh uses it to build "
+        help="Refers to archive mapping from config file. opensighub uses it to build "
         "sources.list entries to download signed-template and dependencies.",
     )
     debsign_parser.add_argument(
@@ -357,7 +357,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     )
     setup_parser = sub_parsers.add_parser(
         "setup",
-        description="Set up user-local environment for osh to help getting started.",
+        description="Set up user-local environment for opensighub to help getting started.",
     )
     setup_sub_parsers = setup_parser.add_subparsers(dest="setup_command")
     setup_sub_parsers.add_parser(
@@ -480,7 +480,7 @@ def main():
             return
         sign_main(run_config)
     except OpensighubError as e:
-        print(f"osh: error: {e}", file=sys.stderr)
+        print(f"opensighub: error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
