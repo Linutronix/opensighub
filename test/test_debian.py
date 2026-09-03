@@ -140,21 +140,8 @@ def test_build_chdist_name_flat_suite_strips_trailing_slash():
     assert LocalPackagePool.build_chdist_name("./", "local_test") == "local_test-."
 
 
-def test_pool_skips_download_if_available():
-    cfg = Config(
-        archives={},
-        archive_keyring=None,
-        log_level=20,
-        signing_keys={},
-        trusted_certificates={},
-        uefi=None,
-        swu=None,
-        kernel_modules=None,
-        hab4=None,
-        optee_ta=None,
-        rpi=None,
-    )
-    pool = LocalPackagePool(cfg)
+def test_pool_skips_download_if_available(empty_config):
+    pool = LocalPackagePool(empty_config)
     pool.download_pkg = MagicMock()
     pool.extract_pkg = MagicMock(return_value=Path("/fake/extract/dir"))
     job = DebianSigningJob(
@@ -164,28 +151,35 @@ def test_pool_skips_download_if_available():
         architecture="amd64",
         version="1.0",
     )
-    pool.download_and_extract_debian(job, ["foo-unsigned"])
-    pool.download_and_extract_debian(job, ["foo-unsigned"])
+    packages = {"foo-unsigned": Package(trusted_certs=[], files=[])}
+    pool.download_and_extract_debian(job, packages)
+    pool.download_and_extract_debian(job, packages)
     pool.download_pkg.assert_called_once()
     pool.extract_pkg.assert_called_once()
 
 
-def test_processor_resolves_relative_spkg_out_dir(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    cfg = Config(
-        archives={},
-        archive_keyring=None,
-        log_level=20,
-        signing_keys={},
-        trusted_certificates={},
-        uefi=None,
-        swu=None,
-        kernel_modules=None,
-        hab4=None,
-        optee_ta=None,
-        rpi=None,
+def test_pool_uses_per_package_version_override(empty_config):
+    pool = LocalPackagePool(empty_config)
+    pool.download_pkg = MagicMock()
+    pool.extract_pkg = MagicMock(return_value=Path("/fake/extract/dir"))
+    job = DebianSigningJob(
+        archive_id="local",
+        suite_codename="./",
+        signing_template="foo-signed-template",
+        architecture="amd64",
+        version="257.13+acme1",
     )
-    processor = DebianSigningProcessor(cfg, Path("signed"))
+    packages = {"systemd-boot-efi": Package(trusted_certs=[], files=[], version="257.13-1~deb13u1")}
+    pool.download_and_extract_debian(job, packages)
+    pool.download_pkg.assert_called_once_with(
+        "systemd-boot-efi", "257.13-1~deb13u1", "./", "amd64", "local"
+    )
+    pool.extract_pkg.assert_called_once_with("systemd-boot-efi", "257.13-1~deb13u1", "amd64")
+
+
+def test_processor_resolves_relative_spkg_out_dir(empty_config, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    processor = DebianSigningProcessor(empty_config, Path("signed"))
     assert processor.spkg_out_dir == tmp_path / "signed"
 
 
