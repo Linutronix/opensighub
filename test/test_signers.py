@@ -77,8 +77,8 @@ def test_kernel_module_sign(softhsm, sample_config, sample_ko_file, tmp_path):
 
 
 @pytest.mark.integration
-def test_hab4_sign(softhsm, sample_config, sample_hab4csf_file, tmp_path):
-    path_to_minimal_hab4_bin = sample_hab4csf_file.parent
+def test_hab4_sign(softhsm, sample_config, sample_hab4csf_file, sample_blob, tmp_path):
+    path_to_minimal_hab4_bin = sample_blob.parent
     signed_csf_dest = tmp_path / "csf.bin"
     with CertCache() as cc:
         hab4_signer = Hab4Sign(cc, sample_config.hab4)

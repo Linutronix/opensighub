@@ -12,15 +12,4 @@ __pycache__/
 # Softlink to Debian repository
 debian
 
-# C build artifacts
-*.efi
-*.lib
-*.o
-*.bin
-*.bin.auth
-*.cmd
-*.symvers
-*.ko
-*.mod
-*.mod.*
-*.order
+test/build/

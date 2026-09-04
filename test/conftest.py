@@ -5,6 +5,7 @@
 import os
 import platform
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -27,6 +28,11 @@ def pytest_addoption(parser):
         "--rpi-eeprom-tool-path",
         action="store",
         help="Path to rpi-eeprom-digest tool",
+    )
+    parser.addoption(
+        "--build-dir",
+        action="store",
+        help="Directory where test artifacts where built. Defaults to test/build/.",
     )
 
 
@@ -53,9 +59,17 @@ def pytest_generate_tests(metafunc):
     os.environ["PATH"] = ":".join(path_parts)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def project_root_path(request):
     return request.config.rootpath
+
+
+@pytest.fixture(scope="session")
+def build_dir(request, project_root_path):
+    build_dir_opt = request.config.getoption("build_dir")
+    if build_dir_opt:
+        return Path(build_dir_opt)
+    return project_root_path / "test" / "build"
 
 
 @pytest.fixture
@@ -116,19 +130,24 @@ def sample_pin_file(tmp_path):
     return pin_file
 
 
-@pytest.fixture
-def sample_blob(project_root_path):
-    return project_root_path / "test" / "signables" / "hab4" / "minimal_hab4.bin"
+def _assert_build(path):
+    assert path.exists(), f"{path} missing, run 'invoke build-signables' first"
+    return path
 
 
 @pytest.fixture
-def sample_efi_file(project_root_path):
-    return project_root_path / "test" / "signables" / "efi" / "minimal.efi"
+def sample_blob(build_dir):
+    return _assert_build(build_dir / "hab4" / "minimal_hab4.bin")
 
 
 @pytest.fixture
-def sample_ko_file(project_root_path):
-    return project_root_path / "test" / "signables" / "ko" / "minimal.ko"
+def sample_efi_file(build_dir):
+    return _assert_build(build_dir / "efi" / "minimal.efi")
+
+
+@pytest.fixture
+def sample_ko_file(build_dir):
+    return _assert_build(build_dir / "ko" / "minimal.ko")
 
 
 @pytest.fixture
@@ -137,9 +156,9 @@ def sample_hab4csf_file(project_root_path):
 
 
 @pytest.fixture
-def sample_ta_file(project_root_path):
-    uuid_file = project_root_path / "test" / "signables" / "elf" / ".uuid"
-    ta_dir = project_root_path / "test" / "signables" / "elf"
+def sample_ta_file(build_dir):
+    uuid_file = _assert_build(build_dir / "elf" / ".uuid")
+    ta_dir = build_dir / "elf"
 
     uuid_str = uuid_file.read_text(encoding="utf-8").strip()
     if not uuid_str:
@@ -149,8 +168,8 @@ def sample_ta_file(project_root_path):
 
 
 @pytest.fixture
-def sample_rpi_boot_file(project_root_path):
-    return project_root_path / "test" / "signables" / "rpi-boot-container" / "boot.img"
+def sample_rpi_boot_file(build_dir):
+    return _assert_build(build_dir / "rpi-boot-container" / "boot.img")
 
 
 @pytest.fixture
