@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: 0BSD
 
-import shutil
 import subprocess
 
 import pytest
@@ -50,7 +49,7 @@ def test_uefi_variable_sign(softhsm, integration_config, sample_blob, tmp_path):
 
 
 @pytest.mark.integration
-def test_kernel_module_sign(softhsm, integration_config, sample_ko_file, tmp_path):
+def test_kernel_module_sign(softhsm, integration_config, sample_ko_file, sign_file, tmp_path):
     signature_dest = tmp_path / "signature.pk7"
     with CertCache() as cc:
         kernel_module_signer = LinuxModuleSign(cc, integration_config.kernel_modules)
@@ -119,7 +118,7 @@ def test_uefi_variable_sign_cli(softhsm, integration_config_yaml_file, sample_bl
 
 
 @pytest.mark.integration
-def test_optee_ta_sign(softhsm, integration_config, sample_ta_file, tmp_path):
+def test_optee_ta_sign(softhsm, integration_config, sample_ta_file, sign_encrypt, tmp_path):
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
         ver = 1
@@ -133,12 +132,9 @@ def test_optee_ta_sign(softhsm, integration_config, sample_ta_file, tmp_path):
         key_uri, pubkey_uri = key_uri.to_private_pubkey()
         pubkey_path = optee_ta_signer.cert_cache[pubkey_uri]
 
-        tool = shutil.which("sign_encrypt.py")
-        assert tool
-
         cmd = [
             "/usr/bin/python3",
-            tool,
+            sign_encrypt,
             "stitch",
             "--uuid",
             ta_uuid,
@@ -158,7 +154,9 @@ def test_optee_ta_sign(softhsm, integration_config, sample_ta_file, tmp_path):
 
 
 @pytest.mark.integration
-def test_rpi_boot_sign(softhsm, integration_config, sample_rpi_boot_file, tmp_path):
+def test_rpi_boot_sign(
+    softhsm, integration_config, sample_rpi_boot_file, rpi_eeprom_digest, tmp_path
+):
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
         rpi_signer = RpiSign(cc, integration_config.rpi)

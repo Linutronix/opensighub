@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: 0BSD
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -171,6 +172,30 @@ def sample_ta_file(build_dir):
 @pytest.fixture
 def sample_rpi_boot_file(build_dir):
     return _assert_build(build_dir / "rpi-boot-container" / "boot.img")
+
+
+def _assert_tool(name, hint=""):
+    tool = shutil.which(name)
+    assert tool, f"{name} missing on PATH" + (f", {hint}" if hint else "")
+    return tool
+
+
+@pytest.fixture
+def sign_file():
+    return _assert_tool("sign-file")
+
+
+@pytest.fixture
+def sign_encrypt():
+    return _assert_tool(
+        "sign_encrypt.py",
+        "pass --optee-scripts-path pointing at an OP-TEE checkout's scripts/ directory",
+    )
+
+
+@pytest.fixture
+def rpi_eeprom_digest():
+    return _assert_tool("rpi-eeprom-digest")
 
 
 @pytest.fixture
