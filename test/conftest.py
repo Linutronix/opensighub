@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: 0BSD
 
 import os
-import platform
 import subprocess
 from pathlib import Path
 
@@ -43,19 +42,15 @@ def pytest_addoption(parser):
 
 
 def pytest_generate_tests(metafunc):
-    sign_file_path_opt = metafunc.config.getoption("sign_file_path")
-    if sign_file_path_opt:
-        sign_file_path = sign_file_path_opt
-    else:
-        uname_no_arch = platform.uname().release.rsplit("-", maxsplit=1)[0]
-        sign_file_path = f"/usr/lib/linux-kbuild-{uname_no_arch}/scripts"
-
+    sign_file_path = metafunc.config.getoption("sign_file_path")
     optee_scripts_path = metafunc.config.getoption("optee_scripts_path")
     rpi_eeprom_tool_path = metafunc.config.getoption("rpi_eeprom_tool_path")
 
     # assemble PATH
     path_parts = [os.environ.get("PATH", "")]
-    path_parts.append(sign_file_path)
+    if sign_file_path:
+        path_parts.append(sign_file_path)
+
     if optee_scripts_path:
         path_parts.append(optee_scripts_path)
 
