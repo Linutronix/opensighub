@@ -7,18 +7,24 @@ CFLAGS = -target x86_64-pc-win32-coff -fno-stack-protector -fshort-wchar -mno-re
 LD = lld-link
 LDFLAGS = -filealign:16 -subsystem:efi_application -nodefaultlib -dll -entry:efi_main
 
+BUILD_DIR := ../../build
+OUT_DIR := $(BUILD_DIR)/efi
+
 SRCS = minimal.c
-OBJS = $(SRCS:.c=.o)
-TARGET = minimal.efi
+OBJS = $(addprefix $(OUT_DIR)/,$(SRCS:.c=.o))
+TARGET = $(OUT_DIR)/minimal.efi
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(LD) $(LDFLAGS) $(OBJS) -out:$(TARGET)
 
-%.o: %.c
+$(OUT_DIR)/%.o: %.c | $(OUT_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT_DIR):
+	mkdir -p $@
 
 .PHONY: clean
 clean:
-	rm -f $(OBJS) $(TARGET) *.lib
+	rm -rf $(OUT_DIR)
