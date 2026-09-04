@@ -2,9 +2,21 @@
 #
 # SPDX-License-Identifier: 0BSD
 
-obj-m = minimal.o
-KVERSION = $(shell uname -r)
-all:
-	make -C /lib/modules/$(KVERSION)/build M=$(PWD) modules
+BUILD_DIR := ../../build
+OUT_DIR := $(BUILD_DIR)/ko
+KVERSION := $(shell uname -r)
+KDIR := /lib/modules/$(KVERSION)/build
+
+all: $(OUT_DIR)/minimal.ko
+
+$(OUT_DIR)/minimal.ko: minimal.c | $(OUT_DIR)
+	ln -sf $(CURDIR)/minimal.c $(OUT_DIR)/minimal.c
+	echo 'obj-m := minimal.o' >$(OUT_DIR)/Kbuild
+	$(MAKE) -C $(KDIR) M=$(abspath $(OUT_DIR)) modules
+
+$(OUT_DIR):
+	mkdir -p $@
+
+.PHONY: clean
 clean:
-	make -C /lib/modules/$(KVERSION)/build M=$(PWD) clean
+	rm -rf $(OUT_DIR)
