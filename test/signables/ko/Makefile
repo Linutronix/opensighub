@@ -4,8 +4,7 @@
 
 BUILD_DIR := ../../build
 OUT_DIR := $(BUILD_DIR)/ko
-KVERSION := $(shell uname -r)
-KDIR := /lib/modules/$(KVERSION)/build
+KDIR := $(lastword $(sort $(wildcard /lib/modules/*/build)))
 
 all: $(OUT_DIR)/minimal.ko
 
