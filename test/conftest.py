@@ -3,13 +3,20 @@
 # SPDX-License-Identifier: 0BSD
 
 import os
-import platform
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
 
 from opensighub.config import Config
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if not any(m.name in ("integration", "live") for m in item.iter_markers()):
+            item.add_marker(pytest.mark.unit)
 
 
 def pytest_addoption(parser):
@@ -28,22 +35,23 @@ def pytest_addoption(parser):
         action="store",
         help="Path to rpi-eeprom-digest tool",
     )
+    parser.addoption(
+        "--build-dir",
+        action="store",
+        help="Directory where test artifacts where built. Defaults to test/build/.",
+    )
 
 
 def pytest_generate_tests(metafunc):
-    sign_file_path_opt = metafunc.config.getoption("sign_file_path")
-    if sign_file_path_opt:
-        sign_file_path = sign_file_path_opt
-    else:
-        uname_no_arch = platform.uname().release.rsplit("-", maxsplit=1)[0]
-        sign_file_path = f"/usr/lib/linux-kbuild-{uname_no_arch}/scripts"
-
+    sign_file_path = metafunc.config.getoption("sign_file_path")
     optee_scripts_path = metafunc.config.getoption("optee_scripts_path")
     rpi_eeprom_tool_path = metafunc.config.getoption("rpi_eeprom_tool_path")
 
     # assemble PATH
     path_parts = [os.environ.get("PATH", "")]
-    path_parts.append(sign_file_path)
+    if sign_file_path:
+        path_parts.append(sign_file_path)
+
     if optee_scripts_path:
         path_parts.append(optee_scripts_path)
 
@@ -53,13 +61,54 @@ def pytest_generate_tests(metafunc):
     os.environ["PATH"] = ":".join(path_parts)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def project_root_path(request):
     return request.config.rootpath
 
 
+@pytest.fixture(scope="session")
+def build_dir(request, project_root_path):
+    build_dir_opt = request.config.getoption("build_dir")
+    if build_dir_opt:
+        return Path(build_dir_opt)
+    return project_root_path / "test" / "build"
+
+
 @pytest.fixture
-def softhsm(project_root_path):
+def softhsm2_conf(tmp_path, monkeypatch):
+    token_dir = tmp_path / "softhsm2-tokens"
+    token_dir.mkdir()
+    conf_file = tmp_path / "softhsm2.conf"
+    conf_file.write_text(
+        f"directories.tokendir = {token_dir}\nobjectstore.backend = file\nlog.level = INFO\n"
+    )
+    monkeypatch.setenv("SOFTHSM2_CONF", str(conf_file))
+
+    openssl_conf = tmp_path / "openssl.cnf"
+    openssl_conf.write_text("""\
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+pkcs11 = pkcs11_sect
+
+[default_sect]
+activate = 1
+
+[pkcs11_sect]
+activate = 1
+pkcs11-module-block-operations = digest
+""")
+    monkeypatch.setenv("OPENSSL_CONF", str(openssl_conf))
+
+    return conf_file
+
+
+@pytest.fixture
+def softhsm(softhsm2_conf, project_root_path):
     cmd = [
         "softhsm2-util",
         "--init-token",
@@ -72,11 +121,7 @@ def softhsm(project_root_path):
         "5678",
     ]
     subprocess.check_call(cmd)
-    try:
-        subprocess.check_call([project_root_path / "test" / "scripts" / "enroll_test_pki.sh"])
-        yield
-    finally:
-        subprocess.check_call(["softhsm2-util", "--delete-token", "--token", "SoftHSM"])
+    subprocess.check_call([project_root_path / "test" / "scripts" / "enroll_test_pki.sh"])
 
 
 @pytest.fixture
@@ -87,19 +132,24 @@ def sample_pin_file(tmp_path):
     return pin_file
 
 
-@pytest.fixture
-def sample_blob(project_root_path):
-    return project_root_path / "test" / "signables" / "hab4" / "minimal_hab4.bin"
+def _assert_build(path):
+    assert path.exists(), f"{path} missing, run 'invoke build-signables' first"
+    return path
 
 
 @pytest.fixture
-def sample_efi_file(project_root_path):
-    return project_root_path / "test" / "signables" / "efi" / "minimal.efi"
+def sample_blob(build_dir):
+    return _assert_build(build_dir / "hab4" / "minimal_hab4.bin")
 
 
 @pytest.fixture
-def sample_ko_file(project_root_path):
-    return project_root_path / "test" / "signables" / "ko" / "minimal.ko"
+def sample_efi_file(build_dir):
+    return _assert_build(build_dir / "efi" / "minimal.efi")
+
+
+@pytest.fixture
+def sample_ko_file(build_dir):
+    return _assert_build(build_dir / "ko" / "minimal.ko")
 
 
 @pytest.fixture
@@ -108,9 +158,9 @@ def sample_hab4csf_file(project_root_path):
 
 
 @pytest.fixture
-def sample_ta_file(project_root_path):
-    uuid_file = project_root_path / "test" / "signables" / "elf" / ".uuid"
-    ta_dir = project_root_path / "test" / "signables" / "elf"
+def sample_ta_file(build_dir):
+    uuid_file = _assert_build(build_dir / "elf" / ".uuid")
+    ta_dir = build_dir / "elf"
 
     uuid_str = uuid_file.read_text(encoding="utf-8").strip()
     if not uuid_str:
@@ -120,8 +170,32 @@ def sample_ta_file(project_root_path):
 
 
 @pytest.fixture
-def sample_rpi_boot_file(project_root_path):
-    return project_root_path / "test" / "signables" / "rpi-boot-container" / "boot.img"
+def sample_rpi_boot_file(build_dir):
+    return _assert_build(build_dir / "rpi-boot-container" / "boot.img")
+
+
+def _assert_tool(name, hint=""):
+    tool = shutil.which(name)
+    assert tool, f"{name} missing on PATH" + (f", {hint}" if hint else "")
+    return tool
+
+
+@pytest.fixture
+def sign_file():
+    return _assert_tool("sign-file")
+
+
+@pytest.fixture
+def sign_encrypt():
+    return _assert_tool(
+        "sign_encrypt.py",
+        "pass --optee-scripts-path pointing at an OP-TEE checkout's scripts/ directory",
+    )
+
+
+@pytest.fixture
+def rpi_eeprom_digest():
+    return _assert_tool("rpi-eeprom-digest")
 
 
 @pytest.fixture
@@ -135,20 +209,8 @@ def swu_file(project_root_path):
 
 
 @pytest.fixture
-def sample_config_yaml(sample_pin_file, repo_pubkey_file):
-    return f"""---
-log-level: DEBUG
-
-archives:
-  debian_org:
-    deb:
-      - url: http://ftp.de.debian.org/debian
-      - url: http://security.debian.org/debian-security
-        suffix: "-security"
-
-archive-keyring: {repo_pubkey_file}
-
-trusted-certificates:
+def signing_config_yaml_block(sample_pin_file):
+    return f"""trusted-certificates:
   acme-2025-hab4-srk1:
     pkcs11_uri: "pkcs11:token=SoftHSM;object=habSRK1CA;type=cert"
   acme-2025-hab4-srk2:
@@ -206,13 +268,58 @@ swu:
 
 
 @pytest.fixture
-def sample_config_yaml_file(tmp_path, sample_config_yaml):
+def unit_config_yaml(repo_pubkey_file, signing_config_yaml_block):
+    return f"""---
+log-level: DEBUG
+
+archives:
+  debian_org:
+    deb:
+      - url: http://ftp.de.debian.org/debian
+      - url: http://security.debian.org/debian-security
+        suffix: "-security"
+
+archive-keyring: {repo_pubkey_file}
+
+{signing_config_yaml_block}"""
+
+
+@pytest.fixture
+def apt_signing_archive(build_dir):
+    archive_dir = build_dir / "apt-signing-archive"
+    _assert_build(archive_dir / "Packages")
+    return archive_dir
+
+
+@pytest.fixture
+def integration_config_yaml(repo_pubkey_file, apt_signing_archive, signing_config_yaml_block):
+    return f"""---
+log-level: DEBUG
+
+archives:
+  debian_org:
+    deb:
+      - url: http://ftp.de.debian.org/debian
+      - url: http://security.debian.org/debian-security
+        suffix: "-security"
+  local:
+    deb:
+      - url: file://{apt_signing_archive}
+        trusted: true
+
+archive-keyring: {repo_pubkey_file}
+
+{signing_config_yaml_block}"""
+
+
+@pytest.fixture
+def integration_config_yaml_file(tmp_path, integration_config_yaml):
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text(sample_config_yaml)
+    cfg_file.write_text(integration_config_yaml)
     return cfg_file
 
 
 @pytest.fixture
-def sample_config(sample_config_yaml):
-    cfg_dict = yaml.safe_load(sample_config_yaml)
+def integration_config(integration_config_yaml):
+    cfg_dict = yaml.safe_load(integration_config_yaml)
     return Config.from_dict(cfg_dict)

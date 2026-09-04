@@ -42,33 +42,42 @@ never packaged with `opensighub`.
 Tasks are defined in `tasks.py` and run as `invoke <task>` (or its alias,
 shown in parentheses):
 
-| Task | Alias | Description |
-|---|---|---|
-| `install-debian-dev` | | Install native dev/test dependencies via apt. |
-| `build-signables` | `bs` | Build minimal signable binaries under `test/signables/`. |
-| `record-quickstart` | `rq` | Render `docs/quickstart.tape` to `docs/quickstart.gif` via VHS. |
-| `test-unit` | `tu` | Run unit tests (`pytest -m "not integration"`). |
-| `test-integration` | `ti` | Run integration tests (`pytest -m integration`); builds signables first. |
-| `test` | `t` | Run both unit and integration tests. |
-| `lint-ruff` | `lr` | `ruff check` — common coding errors. |
-| `lint-ruff-format` | `lf` | `ruff format --check` — formatting. |
-| `lint-mypy` | `lm` | `mypy opensighub` — static type checks. |
-| `lint-reuse` | `lreuse` | `reuse lint` — SPDX license/copyright compliance. |
-| `lint` | `l` | All of the above lint tasks. |
-| `check` | `c` | `lint` + `test`. |
+| Task                 | Alias    | Description                                                     |
+|----------------------|----------|-----------------------------------------------------------------|
+| `install-debian-dev` |          | Install native dev/test dependencies via apt.                   |
+| `build-signables`    | `bs`     | Build minimal signable binaries under `test/signables/`.        |
+| `record-quickstart`  | `rq`     | Render `docs/quickstart.tape` to `docs/quickstart.gif` via VHS. |
+| `test-unit`          | `tu`     | Run unit tests (`pytest -m unit`).                              |
+| `test-integration`   | `ti`     | Run integration tests (`pytest -m integration`).                |
+| `test-live`          | `tl`     | Run live tests against external systems (`pytest -m live`).     |
+| `test`               | `t`      | Run both unit and integration tests.                            |
+| `lint-ruff`          | `lr`     | `ruff check` — common coding errors.                            |
+| `lint-ruff-format`   | `lf`     | `ruff format --check` — formatting.                             |
+| `lint-mypy`          | `lm`     | `mypy opensighub` — static type checks.                         |
+| `lint-reuse`         | `lreuse` | `reuse lint` — SPDX license/copyright compliance.               |
+| `lint`               | `l`      | All of the above lint tasks.                                    |
+| `check`              | `c`      | `lint` + `test`.                                                |
 
 Before pushing, `invoke check` (or `invoke c`) is the single command to run
 everything CI runs.
 
 ## Tests
 
-Unit tests (`test/test_*.py`, excluding integration-marked ones) don't need
-native signing tools and run fast; they're what `invoke test-unit` runs.
-Integration tests are marked with `@pytest.mark.integration` (declared in
-`pyproject.toml`) and exercise the real signing backends, a SoftHSM token,
-and/or network access to external repositories — they need
-`invoke build-signables` to have run first, which `invoke test-integration`
-does automatically.
+Unit tests (`test/test_*.py`, excluding integration- and live-marked ones)
+don't need native signing tools and run fast; they're what `invoke
+test-unit` runs. They're not tagged individually — a
+`pytest_collection_modifyitems` hook in `test/conftest.py` applies
+`@pytest.mark.unit` automatically to every test not marked `integration`
+or `live`, so `-m unit` selects them without an awkward
+`-m "not integration"`. Integration tests are marked with
+`@pytest.mark.integration` (declared in `pyproject.toml`) and exercise the
+real signing backends and a SoftHSM
+token — they need `invoke build-signables` to have run first, which
+`invoke test-integration` does automatically. Live tests are marked with
+`@pytest.mark.live` and need network access to external repositories (e.g.
+the real debian.org archive) or other external services — they're not
+suited for isolated environments and may be unstable, so they're excluded
+from `invoke test-integration` and run separately with `invoke test-live`.
 
 ## CI
 

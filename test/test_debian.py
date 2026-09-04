@@ -41,46 +41,40 @@ def files_json():
 
 
 @pytest.mark.integration
-def test_debian_org_sign_shim(tmp_path, softhsm, sample_config_yaml_file):
-    """Sign shim from internet debian.org archive."""
+def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
         DebianRun(
-            config=sample_config_yaml_file,
+            config=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 DebianSigningJob(
-                    signing_template="shim-helpers-amd64-signed-template",
-                    version="15.8-1",
+                    signing_template="opensighub-test-package-signed-template",
+                    version="1.0-1",
                     architecture="amd64",
-                    suite_codename="trixie",
-                    archive_id="debian_org",
-                ),
-                DebianSigningJob(
-                    signing_template="shim-helpers-arm64-signed-template",
-                    version="15.8-1",
-                    architecture="arm64",
-                    suite_codename="trixie",
-                    archive_id="debian_org",
+                    suite_codename="./",
+                    archive_id="local",
                 ),
             ],
             parallel=5,
             force_overwrite=False,
         )
     )
-    for pkg in ["shim-helpers-amd64-signed", "shim-helpers-arm64-signed"]:
-        assert (tmp_path / pkg).is_dir()
-        assert (tmp_path / pkg / "debian").is_dir()
-        assert (tmp_path / pkg / "debian" / "control").is_file()
-        assert (tmp_path / pkg / "debian" / "rules").is_file()
-        assert (tmp_path / pkg / "debian" / "signatures").is_dir()
-        assert len(list((tmp_path / pkg / "debian" / "signatures").glob("**/*.efi.sig"))) == 2
+    pkg = "opensighub-test-package-signed"
+    assert (tmp_path / pkg).is_dir()
+    assert (tmp_path / pkg / "debian").is_dir()
+    assert (tmp_path / pkg / "debian" / "control").is_file()
+    assert (tmp_path / pkg / "debian" / "rules").is_file()
+    signatures_dir = tmp_path / pkg / "debian" / "signatures"
+    assert signatures_dir.is_dir()
+    signed = {p.name for p in signatures_dir.glob("**/*.sig")}
+    assert signed == {"minimal.efi.sig", "minimal_hab4_csf.txt.sig", "minimal.ko.sig"}
 
 
-@pytest.mark.integration
-def test_debian_org_sign_and_build_shim(tmp_path, softhsm, sample_config_yaml_file):
+@pytest.mark.live
+def test_debian_org_sign_and_build_shim(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
         DebianRun(
-            config=sample_config_yaml_file,
+            config=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 DebianSigningJob(

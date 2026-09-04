@@ -11,6 +11,7 @@ def install_debian_dev(c: Context):
     packages = [
         "clang",
         "devscripts",
+        "gnutls-bin",
         "imx-code-signing-tool",
         "libengine-pkcs11-openssl",
         "linux-headers-generic",
@@ -41,13 +42,19 @@ def record_quickstart(c: Context):
 @task(aliases=("tu",))
 def test_unit(c: Context):
     print("Executing unit tests")
-    c.run('pdm run coverage run -m pytest -m "not integration" test/')
+    c.run("pdm run coverage run -m pytest -m unit test/")
 
 
 @task(build_signables, aliases=("ti",))
 def test_integration(c: Context):
     print("Executing integration tests")
     c.run("pdm run coverage run -m pytest -m integration test/")
+
+
+@task(build_signables, aliases=("tl",))
+def test_live(c: Context):
+    print("Executing live tests")
+    c.run("pdm run coverage run -m pytest -m live test/")
 
 
 @task(test_unit, test_integration, aliases=("t",))

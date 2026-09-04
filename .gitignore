@@ -8,19 +8,6 @@
 .pybuild/
 .venv/
 __pycache__/
+/debian/
 
-# Softlink to Debian repository
-debian
-
-# C build artifacts
-*.efi
-*.lib
-*.o
-*.bin
-*.bin.auth
-*.cmd
-*.symvers
-*.ko
-*.mod
-*.mod.*
-*.order
+test/build/
