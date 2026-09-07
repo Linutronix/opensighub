@@ -59,6 +59,8 @@ def test_cert_from_token(softhsm):
         assert len(f.read()) > 0
 
 
-def test_cert_from_file():
-    with CertCache() as cc, open(cc["/etc/ssl/certs/ca-certificates.crt"]) as f:
+def test_cert_from_file(tmp_path):
+    cert_file = tmp_path / "cert.pem"
+    cert_file.write_text("dummy cert content")
+    with CertCache() as cc, open(cc[str(cert_file)]) as f:
         assert len(f.read()) > 0
