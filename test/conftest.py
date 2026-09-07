@@ -204,8 +204,8 @@ def repo_pubkey_file(project_root_path):
 
 
 @pytest.fixture
-def swu_file(project_root_path):
-    return project_root_path / "test" / "signables" / "swu" / "out.swu"
+def swu_file(build_dir):
+    return _assert_build(build_dir / "swu" / "out.swu")
 
 
 @pytest.fixture

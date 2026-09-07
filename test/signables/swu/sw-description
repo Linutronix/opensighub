@@ -1,0 +1,39 @@
+software =
+{
+    version = "1.0";
+    hardware-compatibility =
+    [
+        "1.0"
+    ];
+    stable =
+    {
+        sys_a =
+        {
+            files =
+            (
+                {
+                    filename = "message.txt";
+                    device = "/dev/disk/by-label/boot_b";
+                    path = "/message.txt";
+                    filesystem = "vfat";
+                    installed-directly = True;
+                    sha256 = "1bece7cd4104d3cba6e58a41e6aaf6474b6a5e1fa45adb97739b8623af0f2c4a";
+                }
+            );
+        };
+        sys_b =
+        {
+            files =
+            (
+                {
+                    filename = "message.txt";
+                    device = "/dev/disk/by-label/boot_a";
+                    path = "/message.txt";
+                    filesystem = "vfat";
+                    installed-directly = True;
+                    sha256 = "1bece7cd4104d3cba6e58a41e6aaf6474b6a5e1fa45adb97739b8623af0f2c4a";
+                }
+            );
+        };
+    };
+};
