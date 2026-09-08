@@ -237,7 +237,7 @@ class PassthroughParser(argparse.ArgumentParser):
         return namespace, extras
 
 
-def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
+def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Sign artifacts or packages according to various schemes."
     )
@@ -369,6 +369,11 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
         description="Generate a self-signed test key in the local SoftHSM token for test purpose"
         " and suitable configuration file.",
     )
+    return parser
+
+
+def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
+    parser = get_parser()
     args = parser.parse_args(arg_list)
     if args.command == "setup":
         return SetupRun(config=Path(args.config), setup_command=args.setup_command)
