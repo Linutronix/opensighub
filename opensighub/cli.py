@@ -375,6 +375,9 @@ def get_parser() -> argparse.ArgumentParser:
 def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     parser = get_parser()
     args = parser.parse_args(arg_list)
+    if args.command is None:
+        parser.print_help()
+        parser.exit()
     if args.command == "setup":
         return SetupRun(config=Path(args.config), setup_command=args.setup_command)
     if args.command == "debsign" and args.passthrough_args and not args.build:
