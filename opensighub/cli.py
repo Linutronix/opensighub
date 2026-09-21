@@ -268,6 +268,7 @@ def get_parser() -> argparse.ArgumentParser:
     sub_parsers = parser.add_subparsers(dest="command", parser_class=PassthroughParser)
     debsign_parser = sub_parsers.add_parser(
         "debsign",
+        help="Sign a package from an apt archive.",
         description="Sign a package from an apt archive.",
         epilog=debian_example,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -275,22 +276,26 @@ def get_parser() -> argparse.ArgumentParser:
     )
     debsign_parser.add_argument(
         "--archive",
+        required=True,
         help="Refers to archive mapping from config file. opensighub uses it to build "
         "sources.list entries to download signed-template and dependencies.",
     )
     debsign_parser.add_argument(
         "--suite",
+        required=True,
         help="The apt archive may have multiple suites. This options selects "
         "the codename of a suite, e.g. bookworm or trixie, "
         "where to download the signed-template and dependencies.",
     )
     debsign_parser.add_argument(
         "--version",
+        required=True,
         help="The apt archive may contain multiple versions of a "
         "signed-template. This options specifies the version to download.",
     )
     debsign_parser.add_argument(
         "--architecture",
+        required=True,
         help="The apt archive may contain a signed-template (and dependencies) "
         "for multiple architectures side by side. This selects the architecture "
         "to download. Values are the same as for sbuild (1) --host=archtiecture.",
@@ -310,6 +315,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     uefi_parser = sub_parsers.add_parser(
         "uefivarsign",
+        help="Sign a data blob as a UEFI authenticated variable.",
         description="Sign arbitrary data blob as UEFI authenticated variable. "
         "The signed output file name is calculated by appending '.auth' to the variable name. "
         "Optional details for signing a variable can be configured in the config file.",
@@ -325,6 +331,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     swu_parser = sub_parsers.add_parser(
         "swusign",
+        help="Sign or resign an existing SW-Update (.swu) file.",
         description="Sign or resign an existing SW-Update file generated for swupdate. "
         "The signed output file name is stored in the output directory using the given input file name. ",
         epilog=swusign_example,
@@ -333,6 +340,7 @@ def get_parser() -> argparse.ArgumentParser:
     swu_parser.add_argument("swu", help="The swu file to sign")
     efibinary_parser = sub_parsers.add_parser(
         "efibinarysign",
+        help="Sign one or more (U)EFI PE/COFF binaries with sbsign.",
         description="Sign one or more (U)EFI PE/COFF binaries (e.g. uki.efi, "
         "vmlinuz) with sbsign. By default the signature is embedded into the "
         "binary (matching sbsign's default), producing a binary that can be "
@@ -357,15 +365,18 @@ def get_parser() -> argparse.ArgumentParser:
     )
     setup_parser = sub_parsers.add_parser(
         "setup",
+        help="Set up user-local environment for opensighub to help getting started.",
         description="Set up user-local environment for opensighub to help getting started.",
     )
     setup_sub_parsers = setup_parser.add_subparsers(dest="setup_command")
     setup_sub_parsers.add_parser(
         "softhsm",
+        help="Set up an isolated, user-local SoftHSM token for test purpose.",
         description="Set up an isolated, user-local SoftHSM token for test purpose.",
     )
     setup_sub_parsers.add_parser(
         "testkeys",
+        help="Generate a self-signed test key and suitable configuration file for test purpose.",
         description="Generate a self-signed test key in the local SoftHSM token for test purpose"
         " and suitable configuration file.",
     )
