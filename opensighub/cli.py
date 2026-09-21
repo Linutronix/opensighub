@@ -8,9 +8,11 @@ import multiprocessing
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import cached_property
 from importlib.metadata import version
 from pathlib import Path
+from typing import TypeVar
 
 import yaml
 from platformdirs import user_config_path
@@ -183,7 +185,13 @@ class TestKeysCmd(BaseCmd):
     pass
 
 
-SetupCmd = SoftHsmCmd | TestKeysCmd
+@dataclass
+class ListKeysCmd(BaseCmd):
+    key_id: str | None
+    columns: list[setup.KeyInfoColumn]
+
+
+SetupCmd = SoftHsmCmd | TestKeysCmd | ListKeysCmd
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
@@ -261,6 +269,21 @@ class PassthroughParser(argparse.ArgumentParser):
         if self._passthrough:
             namespace.passthrough_args = passthrough_args
         return namespace, extras
+
+
+EnumT = TypeVar("EnumT", bound=Enum)
+
+
+def _comma_separated_enum(enum_cls: type[EnumT]) -> Callable[[str], list[EnumT]]:
+    def parse(value: str) -> list[EnumT]:
+        try:
+            return [enum_cls(v) for v in value.split(",") if v]
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(
+                f"{e}. Available: {', '.join(str(m.value) for m in enum_cls)}"
+            ) from e
+
+    return parse
 
 
 def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
@@ -406,6 +429,23 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         description="Generate a self-signed test key in the local SoftHSM token for test purpose"
         " and suitable configuration file.",
     )
+    listkeys_parser = setup_sub_parsers.add_parser(
+        "listkeys",
+        help="List information about configured signing keys.",
+        description="Prints one key per line with values in space-separated columns.",
+    )
+    listkeys_parser.add_argument(
+        "key_id",
+        nargs="?",
+        help="ID of the key in config.yaml. If omitted, all keys are listed.",
+    )
+    listkeys_parser.add_argument(
+        "--columns",
+        type=_comma_separated_enum(setup.KeyInfoColumn),
+        default=[setup.KeyInfoColumn.KEYID, setup.KeyInfoColumn.URI],
+        help="Comma-separated list of columns to print, in order. Available: "
+        f"{', '.join(setup.KeyInfoColumn)}. Defaults to 'keyid,uri'.",
+    )
 
     if generate_completion:
         import shtab
@@ -438,6 +478,13 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         return SoftHsmCmd(config_path=Path(args.config), output=Path(args.output))
     if args.command == "setup" and args.setup_command == "testkeys":
         return TestKeysCmd(config_path=Path(args.config), output=Path(args.output))
+    if args.command == "setup" and args.setup_command == "listkeys":
+        return ListKeysCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            columns=args.columns,
+        )
     if args.command == "debsign" and args.passthrough_args and not args.build:
         parser.error("arguments after '--' require debsign --build")
     if args.command == "swusign":
@@ -522,6 +569,8 @@ def run_setup(run_config: SetupCmd) -> None:
         setup.setup_local_token(run_config.config_path)
     elif isinstance(run_config, TestKeysCmd):
         setup.setup_testenv_keys(run_config.config_path)
+    elif isinstance(run_config, ListKeysCmd):
+        setup.list_keys(run_config.config, run_config.key_id, run_config.columns)
     else:
         raise NotImplementedError
 
