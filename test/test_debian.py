@@ -44,7 +44,7 @@ def files_json():
 def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
         DebSignCmd(
-            config=integration_config_yaml_file,
+            config_path=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 DebianSigningJob(
@@ -74,7 +74,7 @@ def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
 def test_debian_org_sign_and_build_shim(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
         DebSignCmd(
-            config=integration_config_yaml_file,
+            config_path=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 DebianSigningJob(
