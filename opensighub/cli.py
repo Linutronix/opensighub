@@ -237,14 +237,14 @@ class PassthroughParser(argparse.ArgumentParser):
         return namespace, extras
 
 
-def get_parser() -> argparse.ArgumentParser:
+def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Sign artifacts or packages according to various schemes."
     )
     parser.add_argument(
         "-v", "--version", action="version", version=f"%(prog)s {version('opensighub')}"
     )
-    parser.add_argument(
+    config_arg = parser.add_argument(
         "-c",
         "--config",
         default=str(DEFAULT_CONFIG_PATH),
@@ -253,7 +253,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-p", "--parallel", help="Number of concurrent signing operations.", type=int, default=5
     )
-    parser.add_argument(
+    output_arg = parser.add_argument(
         "-o",
         "--output",
         default=".",
@@ -293,14 +293,14 @@ def get_parser() -> argparse.ArgumentParser:
         help="The apt archive may contain multiple versions of a "
         "signed-template. This options specifies the version to download.",
     )
-    debsign_parser.add_argument(
+    architecture_arg = debsign_parser.add_argument(
         "--architecture",
         required=True,
         help="The apt archive may contain a signed-template (and dependencies) "
         "for multiple architectures side by side. This selects the architecture "
         "to download. Values are the same as for sbuild (1) --host=archtiecture.",
     )
-    debsign_parser.add_argument(
+    templates_arg = debsign_parser.add_argument(
         "templates",
         nargs="+",
         help="One or more Debian signed-template binary packages. For each, a "
@@ -337,7 +337,7 @@ def get_parser() -> argparse.ArgumentParser:
         epilog=swusign_example,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    swu_parser.add_argument("swu", help="The swu file to sign")
+    swu_arg = swu_parser.add_argument("swu", help="The swu file to sign")
     efibinary_parser = sub_parsers.add_parser(
         "efibinarysign",
         help="Sign one or more (U)EFI PE/COFF binaries with sbsign.",
@@ -357,7 +357,7 @@ def get_parser() -> argparse.ArgumentParser:
         "signature into the binary. Useful for the Debian signing flow where the "
         "signature is attached later during the package build.",
     )
-    efibinary_parser.add_argument(
+    binaries_arg = efibinary_parser.add_argument(
         "binaries",
         nargs="+",
         help="One or more (U)EFI binaries to sign. Paths are absolute, or "
@@ -380,7 +380,26 @@ def get_parser() -> argparse.ArgumentParser:
         description="Generate a self-signed test key in the local SoftHSM token for test purpose"
         " and suitable configuration file.",
     )
+
+    if generate_completion:
+        import shtab
+
+        config_arg.complete = shtab.FILE  # type: ignore[attr-defined]
+        output_arg.complete = shtab.DIR  # type: ignore[attr-defined]
+        architecture_arg.complete = shtab.cmd(  # type: ignore[attr-defined]
+            "dpkg-architecture -L 2>/dev/null"
+        )
+        templates_arg.complete = shtab.cmd(  # type: ignore[attr-defined]
+            'apt-cache pkgnames "$1" 2>/dev/null | grep -- signed-template'
+        )
+        swu_arg.complete = shtab.FILE  # type: ignore[attr-defined]
+        binaries_arg.complete = shtab.FILE  # type: ignore[attr-defined]
+
     return parser
+
+
+def get_shtab_parser() -> argparse.ArgumentParser:
+    return get_parser(generate_completion=True)
 
 
 def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
