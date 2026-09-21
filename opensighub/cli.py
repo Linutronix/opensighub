@@ -8,6 +8,7 @@ import multiprocessing
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cached_property
 from importlib.metadata import version
 from pathlib import Path
 
@@ -38,8 +39,16 @@ DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
 @dataclass
 class BaseCmd:
-    config: Path
+    config_path: Path
     output: Path
+
+    @cached_property
+    def config(self) -> Config:
+        try:
+            cfg_dict = yaml.safe_load(self.config_path.read_text()) or {}
+        except OSError as e:
+            raise OpensighubError(f"Could not read config file: {e}") from e
+        return Config.from_dict(cfg_dict)
 
 
 @dataclass
@@ -426,15 +435,15 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         parser.print_help()
         parser.exit()
     if args.command == "setup" and args.setup_command == "softhsm":
-        return SoftHsmCmd(config=Path(args.config), output=Path(args.output))
+        return SoftHsmCmd(config_path=Path(args.config), output=Path(args.output))
     if args.command == "setup" and args.setup_command == "testkeys":
-        return TestKeysCmd(config=Path(args.config), output=Path(args.output))
+        return TestKeysCmd(config_path=Path(args.config), output=Path(args.output))
     if args.command == "debsign" and args.passthrough_args and not args.build:
         parser.error("arguments after '--' require debsign --build")
     if args.command == "swusign":
         outfile = Path(args.output) / Path(args.swu).name
         return SwuSignCmd(
-            config=Path(args.config),
+            config_path=Path(args.config),
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
             parallel=args.parallel,
@@ -443,7 +452,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
     if args.command == "efibinarysign":
         detached = args.detached
         return EfiBinarySignCmd(
-            config=Path(args.config),
+            config_path=Path(args.config),
             output=Path(args.output),
             jobs=[
                 UefiSignJob(
@@ -459,7 +468,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         )
     if args.command == "uefivarsign":
         return UefiVarSignCmd(
-            config=Path(args.config),
+            config_path=Path(args.config),
             output=Path(args.output),
             jobs=[
                 UefiVariableSignJob(
@@ -472,7 +481,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         )
     elif args.command == "debsign":
         return DebSignCmd(
-            config=Path(args.config),
+            config_path=Path(args.config),
             output=Path(args.output),
             jobs=[
                 DebianSigningJob(
@@ -498,28 +507,21 @@ def sign_main(run_config: SigningCmd):
     if not run_config or run_config is NotImplementedError:
         return
 
-    try:
-        with open(run_config.config) as fp:
-            cfg_dict = yaml.safe_load(fp)
-    except OSError as e:
-        raise OpensighubError(f"Could not read config file: {e}") from e
-    config = Config.from_dict(cfg_dict)
-
-    logger.setLevel(config.log_level)
+    logger.setLevel(run_config.config.log_level)
 
     with multiprocessing.Manager() as manager:
         shared_data = manager.dict()
         shared_data_lock = manager.Lock()
         with MultiprocessingCertCache(shared_data, shared_data_lock) as cert_cache:
-            process = run_config.processor_factory(config, cert_cache)
+            process = run_config.processor_factory(run_config.config, cert_cache)
             process()
 
 
 def run_setup(run_config: SetupCmd) -> None:
     if isinstance(run_config, SoftHsmCmd):
-        setup.setup_local_token(run_config.config)
+        setup.setup_local_token(run_config.config_path)
     elif isinstance(run_config, TestKeysCmd):
-        setup.setup_testenv_keys(run_config.config)
+        setup.setup_testenv_keys(run_config.config_path)
     else:
         raise NotImplementedError
 
@@ -529,7 +531,7 @@ def main():
     logging.getLogger("opensighub").setLevel(logging.INFO)
 
     run_config = parse_args()
-    setup.enable_local_softhsm2(run_config.config)
+    setup.enable_local_softhsm2(run_config.config_path)
 
     try:
         if isinstance(run_config, SetupCmd):

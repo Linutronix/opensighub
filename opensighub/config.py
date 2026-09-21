@@ -189,7 +189,7 @@ class Config:
                 log_level = logging.INFO
         else:
             log_level = logging.INFO
-        archives = {k: Archive.from_dict(v) for k, v in data["archives"].items()}
+        archives = {k: Archive.from_dict(v) for k, v in data.get("archives", {}).items()}
         signing_keys = {sk: SigningKey.from_dict(sv) for sk, sv in data["signing-keys"].items()}
         trusted_certificates = (
             {k: PublicKeyCertificate(**v) for k, v in data["trusted-certificates"].items()}
