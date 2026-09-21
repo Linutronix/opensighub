@@ -37,9 +37,13 @@ DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
 
 @dataclass
-class SigningRunBase:
+class BaseCmd:
     config: Path
     output: Path
+
+
+@dataclass
+class SigningBaseCmd(BaseCmd):
     parallel: int
     force_overwrite: bool
 
@@ -50,7 +54,7 @@ class SigningRunBase:
 
 
 @dataclass
-class DebianRun(SigningRunBase):
+class DebSignCmd(SigningBaseCmd):
     jobs: list[DebianSigningJob]
     run_sbuild: bool = False
     sbuild_args: list[str] = field(default_factory=list)
@@ -86,7 +90,7 @@ class DebianRun(SigningRunBase):
 
 
 @dataclass
-class UefiVariableRun(SigningRunBase):
+class UefiVarSignCmd(SigningBaseCmd):
     jobs: list[UefiVariableSignJob]
 
     def processor_factory(
@@ -111,7 +115,7 @@ class UefiVariableRun(SigningRunBase):
 
 
 @dataclass
-class SwuRun(SigningRunBase):
+class SwuSignCmd(SigningBaseCmd):
     jobs: list[SwuSignJob]
 
     def processor_factory(
@@ -136,7 +140,7 @@ class SwuRun(SigningRunBase):
 
 
 @dataclass
-class EfiBinaryRun(SigningRunBase):
+class EfiBinarySignCmd(SigningBaseCmd):
     jobs: list[UefiSignJob]
 
     def processor_factory(
@@ -161,9 +165,17 @@ class EfiBinaryRun(SigningRunBase):
 
 
 @dataclass
-class SetupRun:
-    config: Path
-    setup_command: str | None
+class SoftHsmCmd(BaseCmd):
+    pass
+
+
+@dataclass
+class TestKeysCmd(BaseCmd):
+    pass
+
+
+SetupCmd = SoftHsmCmd | TestKeysCmd
+SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
 debian_example = """examples:
@@ -407,19 +419,21 @@ def get_shtab_parser() -> argparse.ArgumentParser:
     return get_parser(generate_completion=True)
 
 
-def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
+def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
     parser = get_parser()
     args = parser.parse_args(arg_list)
     if args.command is None:
         parser.print_help()
         parser.exit()
-    if args.command == "setup":
-        return SetupRun(config=Path(args.config), setup_command=args.setup_command)
+    if args.command == "setup" and args.setup_command == "softhsm":
+        return SoftHsmCmd(config=Path(args.config), output=Path(args.output))
+    if args.command == "setup" and args.setup_command == "testkeys":
+        return TestKeysCmd(config=Path(args.config), output=Path(args.output))
     if args.command == "debsign" and args.passthrough_args and not args.build:
         parser.error("arguments after '--' require debsign --build")
     if args.command == "swusign":
         outfile = Path(args.output) / Path(args.swu).name
-        return SwuRun(
+        return SwuSignCmd(
             config=Path(args.config),
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
@@ -428,7 +442,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
         )
     if args.command == "efibinarysign":
         detached = args.detached
-        return EfiBinaryRun(
+        return EfiBinarySignCmd(
             config=Path(args.config),
             output=Path(args.output),
             jobs=[
@@ -444,7 +458,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
             force_overwrite=args.yes,
         )
     if args.command == "uefivarsign":
-        return UefiVariableRun(
+        return UefiVarSignCmd(
             config=Path(args.config),
             output=Path(args.output),
             jobs=[
@@ -457,7 +471,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
             force_overwrite=args.yes,
         )
     elif args.command == "debsign":
-        return DebianRun(
+        return DebSignCmd(
             config=Path(args.config),
             output=Path(args.output),
             jobs=[
@@ -478,7 +492,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     raise NotImplementedError
 
 
-def sign_main(run_config: SigningRunBase):
+def sign_main(run_config: SigningCmd):
     logger = logging.getLogger("opensighub")
 
     if not run_config or run_config is NotImplementedError:
@@ -501,10 +515,10 @@ def sign_main(run_config: SigningRunBase):
             process()
 
 
-def run_setup(run_config: SetupRun):
-    if run_config.setup_command == "softhsm":
+def run_setup(run_config: SetupCmd) -> None:
+    if isinstance(run_config, SoftHsmCmd):
         setup.setup_local_token(run_config.config)
-    elif run_config.setup_command == "testkeys":
+    elif isinstance(run_config, TestKeysCmd):
         setup.setup_testenv_keys(run_config.config)
     else:
         raise NotImplementedError
@@ -518,10 +532,10 @@ def main():
     setup.enable_local_softhsm2(run_config.config)
 
     try:
-        if isinstance(run_config, SetupRun):
+        if isinstance(run_config, SetupCmd):
             run_setup(run_config)
-            return
-        sign_main(run_config)
+        elif isinstance(run_config, SigningCmd):
+            sign_main(run_config)
     except OpensighubError as e:
         print(f"opensighub: error: {e}", file=sys.stderr)
         sys.exit(1)

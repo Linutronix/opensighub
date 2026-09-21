@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from opensighub.cli import DebianRun, sign_main
+from opensighub.cli import DebSignCmd, sign_main
 from opensighub.config import Config
 from opensighub.debian import (
     DebianSigningJob,
@@ -43,7 +43,7 @@ def files_json():
 @pytest.mark.integration
 def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
-        DebianRun(
+        DebSignCmd(
             config=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
@@ -73,7 +73,7 @@ def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
 @pytest.mark.live
 def test_debian_org_sign_and_build_shim(tmp_path, softhsm, integration_config_yaml_file):
     sign_main(
-        DebianRun(
+        DebSignCmd(
             config=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
