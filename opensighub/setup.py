@@ -5,12 +5,15 @@
 import logging
 import os
 import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import replace
+from enum import StrEnum
 from pathlib import Path
 
 import yaml
 from platformdirs import user_data_path
 
+from opensighub.config import Config, SigningKey
 from opensighub.util import OpensighubError, Pkcs11Uri, Pkcs11UriQattr, raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
@@ -193,3 +196,30 @@ def setup_testenv_keys(config_path: Path) -> None:
     config.setdefault("uefi", {"key": SOFTHSM_TEST_UEFI_KEY_LABEL})
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     logger.info(f"Done. Test key entered in {config_path}.")
+
+
+class KeyInfoColumn(StrEnum):
+    KEYID = "keyid"
+    URI = "uri"
+
+
+KEY_INFO_COLUMNS: dict[str, Callable[[str, SigningKey], str]] = {
+    KeyInfoColumn.KEYID: lambda key_id, key: key_id,
+    KeyInfoColumn.URI: lambda key_id, key: str(Pkcs11Uri.try_parse(key.pkcs11_uri)),
+}
+
+
+def list_keys(config: Config, key_id: str | None, columns: Sequence[KeyInfoColumn]) -> None:
+    if unknown := [c for c in columns if c not in KEY_INFO_COLUMNS]:
+        raise OpensighubError(
+            f"Unsupported column(s): {', '.join(unknown)}. Available: {', '.join(KEY_INFO_COLUMNS)}"
+        )
+    if key_id is not None:
+        if key_id not in config.signing_keys:
+            raise OpensighubError(f"Key '{key_id}' is not configured")
+        entries = [(key_id, config.signing_keys[key_id])]
+    else:
+        entries = list(config.signing_keys.items())
+
+    for kid, key in entries:
+        print(" ".join(KEY_INFO_COLUMNS[column](kid, key) for column in columns))
