@@ -104,7 +104,7 @@ def test_uefi_variable_sign_cli(softhsm, integration_config_yaml_file, sample_bl
     signed_artifact = tmp_path / "myvar.auth"
     sign_main(
         UefiVarSignCmd(
-            config=integration_config_yaml_file,
+            config_path=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 UefiVariableSignJob(
