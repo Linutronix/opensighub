@@ -21,7 +21,8 @@ touch ./index.txt
 echo "12345678" > ./serial
 
 function keygen {
-  p11tool --login --generate-rsa --bits 4096 --label "$1" --outfile /dev/null "pkcs11:token=${TOKEN}"
+  local bits="${2:-4096}"
+  p11tool --login --generate-rsa --bits "$bits" --label "$1" --outfile /dev/null "pkcs11:token=${TOKEN}"
 }
 
 function write_cert {
@@ -79,7 +80,7 @@ write_cert "${tmpdir}/crts/IMG2_1_sha256_4096_65537_v3_usr_crt.pem" "habIMG21"
 keygen "ta-root-key"
 
 # Generating Rpi root key / public key
-keygen "rpi-boot-key"
+keygen "rpi-boot-key" 2048
 
 # Generating SWU key and certificate
 keygen "SWU"
