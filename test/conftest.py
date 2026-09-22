@@ -174,6 +174,11 @@ def sample_rpi_boot_file(build_dir):
     return _assert_build(build_dir / "rpi-boot-container" / "boot.img")
 
 
+@pytest.fixture
+def sample_rpi_eeprom_file(build_dir):
+    return _assert_build(build_dir / "rpi-eeprom" / "pieeprom.bin")
+
+
 def _assert_tool(name, hint=""):
     tool = shutil.which(name)
     assert tool, f"{name} missing on PATH" + (f", {hint}" if hint else "")
@@ -196,6 +201,11 @@ def sign_encrypt():
 @pytest.fixture
 def rpi_eeprom_digest():
     return _assert_tool("rpi-eeprom-digest")
+
+
+@pytest.fixture
+def rpi_sign_bootcode():
+    return _assert_tool("rpi-sign-bootcode")
 
 
 @pytest.fixture
