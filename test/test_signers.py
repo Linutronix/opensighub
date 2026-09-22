@@ -11,6 +11,7 @@ from opensighub.signers import (
     Hab4Sign,
     LinuxModuleSign,
     OpteeTaSign,
+    RpiEepromSign,
     RpiSign,
     SwuSign,
     UefiSign,
@@ -176,6 +177,62 @@ def test_rpi_boot_sign(
                 sample_rpi_boot_file,
                 "-v",
                 signature_dest,
+            ]
+        )
+
+
+@pytest.mark.integration
+def test_rpi_eeprom_sign(
+    softhsm, integration_config, sample_rpi_eeprom_file, rpi_sign_bootcode, tmp_path
+):
+    signature_dest = tmp_path / "signature.bin"
+    version = 0
+    keynum = 16
+    with CertCache() as cc:
+        rpi_eeprom_signer = RpiEepromSign(cc, integration_config.rpi)
+        rpi_eeprom_signer.sign(sample_rpi_eeprom_file, signature_dest, version, keynum)
+        assert signature_dest.is_file()
+
+        key_uri = Pkcs11Uri.try_parse(integration_config.rpi.key.pkcs11_uri)
+        key_uri, pubkey_uri = key_uri.to_private_pubkey()
+
+        signed_dest = tmp_path / "pieeprom.bin.signed"
+
+        # Attach signature using rpi-sign-bootcode
+        subprocess.check_call(
+            [
+                "/usr/bin/python3",
+                rpi_sign_bootcode,
+                "-c",
+                "2712",
+                "-i",
+                sample_rpi_eeprom_file,
+                "-o",
+                signed_dest,
+                "-p",
+                cc[pubkey_uri],
+                "-s",
+                signature_dest,
+                "-n",
+                str(keynum),
+                "-v",
+                str(version),
+            ]
+        )
+        assert signed_dest.is_file()
+
+        # Verify signature with rpi-sign-bootcode -V
+        subprocess.check_call(
+            [
+                "/usr/bin/python3",
+                rpi_sign_bootcode,
+                "-c",
+                "2712",
+                "-V",
+                "-i",
+                signed_dest,
+                "-p",
+                cc[pubkey_uri],
             ]
         )
 

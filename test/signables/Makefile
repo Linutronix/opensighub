@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: 0BSD
 
-SUBDIRS := efi hab4 ko elf rpi-boot-container swu apt-signing-archive
+SUBDIRS := efi hab4 ko elf rpi-boot-container swu apt-signing-archive rpi-eeprom
 SUBTARGETS := all clean
 
 $(SUBTARGETS): $(SUBDIRS)
