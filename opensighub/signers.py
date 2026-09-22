@@ -143,12 +143,29 @@ class RpiSignJob(RawSignJob):
         registry.get_rpi_signer().sign(self.artifact, self.signed_artifact)
 
 
+@dataclass
+class RpiEepromSignJob(RawSignJob):
+    artifact: Path
+    signed_artifact: Path
+    version: int | None = None
+    keynum: int | None = None
+
+    def preflight(self, registry: "SignerRegistry") -> None:
+        registry.get_rpi_eeprom_signer().preflight(self)
+
+    def sign(self, registry: "SignerRegistry") -> None:
+        registry.get_rpi_eeprom_signer().sign(
+            self.artifact, self.signed_artifact, self.version, self.keynum
+        )
+
+
 Job = (
     UefiSignJob
     | UefiVariableSignJob
     | LinuxModuleSignJob
     | Hab4SignJob
     | RpiSignJob
+    | RpiEepromSignJob
     | OpteeTaSignJob
     | SwuSignJob
 )
@@ -633,6 +650,46 @@ class RpiSign(RawSign):
             signature.write_text(f"{digest_hex}\nts: {ts}\nrsa2048: {sig_hex}\n")
 
 
+class RpiEepromSign(RawSign):
+    def preflight(self, job: RawSignJob) -> None:
+        raise_if_tool_missing("openssl", "rpi-sign-bootcode")
+
+    def sign(
+        self, artifact: Path, signature: Path, version: int | None, keynum: int | None
+    ) -> None:
+        """
+        Sign Raspberry eeprom file
+        """
+        with tempfile.TemporaryDirectory() as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+            digest_bin = tmpdir / "tmp.dig"
+            bootcode_prep = tmpdir / "bootcode.prep"
+
+            tool_sign_bootcode = shutil.which("rpi-sign-bootcode")
+            assert tool_sign_bootcode is not None
+
+            cmd_sign_bootcode = [
+                "/usr/bin/python3",
+                tool_sign_bootcode,
+                "-c",
+                "2712",
+                "-n",
+                str(keynum),
+                "-v",
+                str(version),
+                "--prepare",
+                "-i",
+                str(artifact),
+                "-o",
+                str(bootcode_prep),
+            ]
+
+            subprocess.check_call(cmd_sign_bootcode)
+
+            super().digest(bootcode_prep, digest_bin)
+            super().sign_digest(digest_bin, signature)
+
+
 class SignerRegistry:
     """Gives each job typed access to exactly the signer it needs. Each job's
     sign()/preflight() takes the registry and calls its own get_xxx_signer(),
@@ -647,6 +704,7 @@ class SignerRegistry:
         hab4_signer: Hab4Sign | None,
         optee_ta_signer: OpteeTaSign | None,
         rpi_signer: RpiSign | None,
+        rpi_eeprom_signer: RpiEepromSign | None,
     ):
         self._uefi_signer = uefi_signer
         self._uefi_variable_signer = uefi_variable_signer
@@ -655,6 +713,7 @@ class SignerRegistry:
         self._hab4_signer = hab4_signer
         self._optee_ta_signer = optee_ta_signer
         self._rpi_signer = rpi_signer
+        self._rpi_eeprom_signer = rpi_eeprom_signer
 
     def get_uefi_signer(self) -> UefiSign:
         if self._uefi_signer is None:
@@ -691,6 +750,11 @@ class SignerRegistry:
             raise ValueError("RPI signer not configured")
         return self._rpi_signer
 
+    def get_rpi_eeprom_signer(self) -> RpiEepromSign:
+        if self._rpi_eeprom_signer is None:
+            raise ValueError("RPI EEPROM signer not configured")
+        return self._rpi_eeprom_signer
+
     def preflight(self, job: Job) -> None:
         job.preflight(self)
 
@@ -708,6 +772,7 @@ class SigningPool:
         hab4_signer: Hab4Sign | None,
         optee_ta_signer: OpteeTaSign | None,
         rpi_signer: RpiSign | None,
+        rpi_eeprom_signer: RpiEepromSign | None,
         parallel: int,
     ):
         self.registry = SignerRegistry(
@@ -718,6 +783,7 @@ class SigningPool:
             hab4_signer,
             optee_ta_signer,
             rpi_signer,
+            rpi_eeprom_signer,
         )
         self.parallel = parallel
 

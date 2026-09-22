@@ -17,6 +17,7 @@ from opensighub.signers import (
     Hab4SignJob,
     LinuxModuleSignJob,
     OpteeTaSignJob,
+    RpiEepromSignJob,
     RpiSignJob,
     SigningPool,
     UefiSignJob,
@@ -41,6 +42,7 @@ class FileEntry:
     sig_type: str
     file: Path
     version: int | None = None
+    keynum: int | None = None
 
 
 @dataclass
@@ -58,6 +60,7 @@ class Package:
                     sig_type=f["sig_type"],
                     file=Path(f["file"]),
                     version=int(f["version"]) if "version" in f else None,
+                    keynum=int(f["keynum"]) if "keynum" in f else None,
                 )
                 for f in data.get("files")
             ],
@@ -308,7 +311,14 @@ class DebianSigningProcessor:
 
     def _make_job(
         self, pkg_name: str, file: FileEntry
-    ) -> Hab4SignJob | LinuxModuleSignJob | UefiSignJob | OpteeTaSignJob | RpiSignJob:
+    ) -> (
+        Hab4SignJob
+        | LinuxModuleSignJob
+        | UefiSignJob
+        | OpteeTaSignJob
+        | RpiSignJob
+        | RpiEepromSignJob
+    ):
         assert self.template_source_dir is not None
         pkg_dir = self.repo.dirs_by_pkgname[pkg_name].extract_dir
         rel_file = file.file.relative_to("/") if file.file.is_absolute() else file.file
@@ -331,6 +341,13 @@ class DebianSigningProcessor:
             return OpteeTaSignJob(unsigned_file, detached_sig_path, file.sig_type, file.version)
         elif (file.sig_type == "rpi-boot") and self.config.rpi:
             return RpiSignJob(unsigned_file, detached_sig_path)
+        elif (file.sig_type == "rpi-eeprom") and self.config.rpi:
+            return RpiEepromSignJob(
+                artifact=unsigned_file,
+                signed_artifact=detached_sig_path,
+                version=file.version,
+                keynum=file.keynum,
+            )
 
         raise ValueError(
             f"files.json lists signature type {file.sig_type}, but no such signer is configured"
