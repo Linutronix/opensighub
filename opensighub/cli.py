@@ -21,6 +21,7 @@ from opensighub.signers import (
     Hab4Sign,
     LinuxModuleSign,
     OpteeTaSign,
+    RpiEepromSign,
     RpiSign,
     SigningPool,
     SwuSign,
@@ -72,6 +73,7 @@ class DebianRun(SigningRunBase):
             Hab4Sign(cert_cache, config.hab4) if config.hab4 else None,
             OpteeTaSign(cert_cache, config.optee_ta) if config.optee_ta else None,
             RpiSign(cert_cache, config.rpi) if config.rpi else None,
+            RpiEepromSign(cert_cache, config.rpi) if config.rpi else None,
             parallel=self.parallel,
         )
 
@@ -98,6 +100,7 @@ class UefiVariableRun(SigningRunBase):
             None,  # hab4_signer
             None,  # optee_ta_signer
             None,  # rpi_signer
+            None,  # rpi_eeprom_signer
             parallel=self.parallel,
         )
 
@@ -122,6 +125,7 @@ class SwuRun(SigningRunBase):
             None,  # hab4_signer
             None,  # optee_ta_signer
             None,  # rpi_signer
+            None,  # rpi_eeprom_signer
             parallel=self.parallel,
         )
 
@@ -146,6 +150,7 @@ class EfiBinaryRun(SigningRunBase):
             None,  # hab4_signer
             None,  # optee_ta_signer
             None,  # rpi_signer
+            None,  # rpi_eeprom_signer
             parallel=self.parallel,
         )
 
