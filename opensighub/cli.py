@@ -442,9 +442,10 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
     listkeys_parser.add_argument(
         "--columns",
         type=_comma_separated_enum(setup.KeyInfoColumn),
-        default=[setup.KeyInfoColumn.KEYID, setup.KeyInfoColumn.URI],
+        default=[setup.KeyInfoColumn.KEYID, setup.KeyInfoColumn.URI, setup.KeyInfoColumn.STATUS],
         help="Comma-separated list of columns to print, in order. Available: "
-        f"{', '.join(setup.KeyInfoColumn)}. Defaults to 'keyid,uri'.",
+        f"{', '.join(setup.KeyInfoColumn)} (status: available/loginrequired/offline; runs "
+        "openssl storeutl). Defaults to 'keyid,uri,status'.",
     )
 
     if generate_completion:
@@ -570,7 +571,8 @@ def run_setup(run_config: SetupCmd) -> None:
     elif isinstance(run_config, TestKeysCmd):
         setup.setup_testenv_keys(run_config.config_path)
     elif isinstance(run_config, ListKeysCmd):
-        setup.list_keys(run_config.config, run_config.key_id, run_config.columns)
+        key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
+        print("\n".join(" ".join(row) for row in key_info))
     else:
         raise NotImplementedError
 

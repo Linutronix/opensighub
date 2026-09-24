@@ -333,3 +333,10 @@ def integration_config_yaml_file(tmp_path, integration_config_yaml):
 def integration_config(integration_config_yaml):
     cfg_dict = yaml.safe_load(integration_config_yaml)
     return Config.from_dict(cfg_dict)
+
+
+@pytest.fixture
+def unit_config(unit_config_yaml):
+    # repo_pubkey_file, signing_config_yaml_block
+    cfg_dict = yaml.safe_load(unit_config_yaml)
+    return Config.from_dict(cfg_dict)

@@ -4,7 +4,7 @@
 
 import pytest
 
-from opensighub.setup import setup_testenv_keys
+from opensighub.setup import get_key_info, setup_testenv_keys
 from opensighub.util import OpensighubError
 
 
@@ -12,3 +12,29 @@ def test_setup_testenv_keys_requires_softhsm_setup_first(tmp_path, monkeypatch):
     monkeypatch.setattr("opensighub.setup.user_data_path", lambda name: tmp_path / "data")
     with pytest.raises(OpensighubError, match="opensighub setup softhsm"):
         setup_testenv_keys(tmp_path / "config.yaml")
+
+
+def test_setup_get_key_info_invalid_column(unit_config):
+    with pytest.raises(OpensighubError):
+        get_key_info(unit_config, ["bad"])
+
+
+def test_setup_get_key_info_name_uri(unit_config):
+    key_info = get_key_info(unit_config, ["keyid", "uri"], key_id="acme-2025-uefi")
+    assert len(key_info) == 1
+    assert key_info[0][0] == "acme-2025-uefi"
+    assert key_info[0][1].startswith("pkcs11:token=SoftHSM;object=habIMG11?pin-source=")
+
+
+def test_setup_get_key_info_all_name_uri(unit_config):
+    key_info = get_key_info(unit_config, ["keyid", "uri"])
+    assert len(key_info) == 7
+    for columns in key_info:
+        assert len(columns) == 2
+
+
+@pytest.mark.integration
+def test_setup_get_key_info_status(softhsm, integration_config):
+    key_info = get_key_info(integration_config, ["status"], "acme-2025-uefi")
+    assert len(key_info) == 1
+    assert key_info[0][0] == "available"

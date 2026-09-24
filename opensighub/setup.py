@@ -4,6 +4,7 @@
 
 import logging
 import os
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -201,25 +202,56 @@ def setup_testenv_keys(config_path: Path) -> None:
 class KeyInfoColumn(StrEnum):
     KEYID = "keyid"
     URI = "uri"
+    STATUS = "status"
+
+
+def _key_status(key: SigningKey) -> str:
+    try:
+        Pkcs11Uri.try_parse(key.pkcs11_uri)
+        provider = "pkcs11"
+    except ValueError:
+        return "invalid"
+    try:
+        result = subprocess.run(
+            ["openssl", "storeutl", "-provider", provider, key.pkcs11_uri],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            start_new_session=True,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "offline"
+    match = re.search(r"Total found:\s+(\d+)", result.stdout)
+    if match and int(match.group(1)) > 0:
+        return "available"
+    if "pass phrase" in result.stderr or "PIN" in result.stderr:
+        return "loginrequired"
+    return "offline"
 
 
 KEY_INFO_COLUMNS: dict[str, Callable[[str, SigningKey], str]] = {
-    KeyInfoColumn.KEYID: lambda key_id, key: key_id,
-    KeyInfoColumn.URI: lambda key_id, key: str(Pkcs11Uri.try_parse(key.pkcs11_uri)),
+    KeyInfoColumn.KEYID: lambda key_id, _: key_id,
+    KeyInfoColumn.URI: lambda _, key: key.pkcs11_uri,
+    KeyInfoColumn.STATUS: lambda _, key: _key_status(key),
 }
 
 
-def list_keys(config: Config, key_id: str | None, columns: Sequence[KeyInfoColumn]) -> None:
+def get_key_info(
+    config: Config, columns: Sequence[KeyInfoColumn], key_id: str | None = None
+) -> list[list[str]]:
     if unknown := [c for c in columns if c not in KEY_INFO_COLUMNS]:
         raise OpensighubError(
             f"Unsupported column(s): {', '.join(unknown)}. Available: {', '.join(KEY_INFO_COLUMNS)}"
         )
-    if key_id is not None:
-        if key_id not in config.signing_keys:
-            raise OpensighubError(f"Key '{key_id}' is not configured")
-        entries = [(key_id, config.signing_keys[key_id])]
-    else:
-        entries = list(config.signing_keys.items())
+    if "status" in columns:
+        raise_if_tool_missing("openssl")
 
-    for kid, key in entries:
-        print(" ".join(KEY_INFO_COLUMNS[column](kid, key) for column in columns))
+    key_ids = [key_id] if key_id is not None else config.signing_keys.keys()
+    result = []
+    for k in key_ids:
+        if k not in config.signing_keys:
+            raise OpensighubError(f"Key '{key_id}' is not configured")
+        result.append([KEY_INFO_COLUMNS[column](k, config.signing_keys[k]) for column in columns])
+    return result
