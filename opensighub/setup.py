@@ -15,6 +15,7 @@ import yaml
 from platformdirs import user_data_path
 
 from opensighub.config import Config, SigningKey
+from opensighub.signers import confirm_overwrite
 from opensighub.util import OpensighubError, Pkcs11Uri, Pkcs11UriQattr, raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
@@ -203,6 +204,95 @@ class KeyInfoColumn(StrEnum):
     KEYID = "keyid"
     URI = "uri"
     STATUS = "status"
+
+
+class ExtendedKeyUsage(StrEnum):
+    """RFC 5280 §4.2.1.12 (OID 2.5.29.37) well-known purposes; openssl's symbolic names."""
+
+    SERVER_AUTH = "serverAuth"
+    CLIENT_AUTH = "clientAuth"
+    CODE_SIGNING = "codeSigning"
+    EMAIL_PROTECTION = "emailProtection"
+    TIME_STAMPING = "timeStamping"
+    OCSP_SIGNING = "OCSPSigning"
+
+
+def _csr_openssl_subject(
+    country: str | None,
+    state_or_province: str | None,
+    locality: str | None,
+    organization: str | None,
+    organizational_unit: str | None,
+    common_name: str | None,
+    email_address: str | None,
+) -> str:
+    fields = [
+        ("C", country),
+        ("ST", state_or_province),
+        ("L", locality),
+        ("O", organization),
+        ("OU", organizational_unit),
+        ("CN", common_name),
+        ("emailAddress", email_address),
+    ]
+    escaped = [(name, value.replace("/", "\\/")) for name, value in fields if value]
+    return "/" + "/".join(f"{name}={value}" for name, value in escaped)
+
+
+def generate_csr(
+    config: Config,
+    key_id: str,
+    output_dir: Path,
+    force_overwrite: bool = False,
+    country: str | None = None,
+    state_or_province: str | None = None,
+    locality: str | None = None,
+    organization: str | None = None,
+    organizational_unit: str | None = None,
+    common_name: str | None = None,
+    email_address: str | None = None,
+    purpose: Sequence[ExtendedKeyUsage] | None = None,
+) -> None:
+    raise_if_tool_missing("openssl")
+    if key_id not in config.signing_keys:
+        raise OpensighubError(f"No signing key '{key_id}'")
+    if purpose and (unknown := [p for p in purpose if p not in list(ExtendedKeyUsage)]):
+        raise OpensighubError(
+            f"Unsupported purpose(s): {', '.join(unknown)}. "
+            f"Available: {', '.join(ExtendedKeyUsage)}"
+        )
+
+    csr_path = output_dir / f"{key_id}.csr"
+    if csr_path.exists():
+        confirm_overwrite(csr_path, force_overwrite)
+    csr_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Generating CSR for key '{key_id}' at {csr_path}")
+    subprocess.check_call(
+        [
+            "openssl",
+            "req",
+            "-provider",
+            "pkcs11",
+            "-new",
+            "-batch",
+            "-subj",
+            _csr_openssl_subject(
+                country,
+                state_or_province,
+                locality,
+                organization,
+                organizational_unit,
+                common_name,
+                email_address,
+            ),
+            *(["-addext", f"extendedKeyUsage={','.join(purpose)}"] if purpose else []),
+            "-key",
+            config.signing_keys[key_id].pkcs11_uri,
+            "-out",
+            str(csr_path),
+        ]
+    )
 
 
 def _key_status(key: SigningKey) -> str:

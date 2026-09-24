@@ -191,7 +191,21 @@ class ListKeysCmd(BaseCmd):
     columns: list[setup.KeyInfoColumn]
 
 
-SetupCmd = SoftHsmCmd | TestKeysCmd | ListKeysCmd
+@dataclass
+class CsrCmd(BaseCmd):
+    key_id: str
+    force_overwrite: bool
+    country: str | None
+    state_or_province: str | None
+    locality: str | None
+    organization: str | None
+    organizational_unit: str | None
+    common_name: str | None
+    email_address: str | None
+    purpose: list[setup.ExtendedKeyUsage] | None
+
+
+SetupCmd = SoftHsmCmd | TestKeysCmd | ListKeysCmd | CsrCmd
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
@@ -447,6 +461,32 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         f"{', '.join(setup.KeyInfoColumn)} (status: available/loginrequired/offline; runs "
         "openssl storeutl). Defaults to 'keyid,uri,status'.",
     )
+    csr_parser = setup_sub_parsers.add_parser(
+        "csr",
+        help="Generate certificate signing request for a configured signing key.",
+        description="Generate a PEM encoded PKCS#10 certificate signing request (CSR) and store it "
+        "as <key-id>.csr into the output directory. The CSR can be submitted to a certificate authority "
+        "to request a signer certificate.",
+    )
+    key_id_arg = csr_parser.add_argument(
+        "key_id",
+        help="ID of the key in config.yaml's signing-keys section to generate a CSR for.",
+    )
+    csr_parser.add_argument("--country", help="Subject countryName (C).")
+    csr_parser.add_argument("--state-or-province", help="Subject stateOrProvinceName (ST).")
+    csr_parser.add_argument("--locality", help="Subject localityName (L).")
+    csr_parser.add_argument("--organization", help="Subject organizationName (O).")
+    csr_parser.add_argument("--organizational-unit", help="Subject organizationalUnitName (OU).")
+    csr_parser.add_argument("--common-name", help="Subject commonName (CN).")
+    csr_parser.add_argument("--email-address", help="Subject emailAddress.")
+    csr_parser.add_argument(
+        "--purpose",
+        type=_comma_separated_enum(setup.ExtendedKeyUsage),
+        default=None,
+        help="Comma-separated X.509v3 extended key usage purpose(s) (OID 2.5.29.37, RFC 5280 "
+        f"§4.2.1.12) to request in the CSR. Available: {', '.join(setup.ExtendedKeyUsage)}. "
+        "Whether the issuing CA honors this depends on its policy.",
+    )
 
     if generate_completion:
         import shtab
@@ -461,6 +501,9 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         )
         swu_arg.complete = shtab.FILE  # type: ignore[attr-defined]
         binaries_arg.complete = shtab.FILE  # type: ignore[attr-defined]
+        key_id_arg.complete = shtab.cmd(  # type: ignore[attr-defined]
+            "opensighub setup listkeys --columns keyid 2>/dev/null"
+        )
 
     return parser
 
@@ -485,6 +528,21 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             output=Path(args.output),
             key_id=args.key_id,
             columns=args.columns,
+        )
+    if args.command == "setup" and args.setup_command == "csr":
+        return CsrCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            force_overwrite=args.yes,
+            country=args.country,
+            state_or_province=args.state_or_province,
+            locality=args.locality,
+            organization=args.organization,
+            organizational_unit=args.organizational_unit,
+            common_name=args.common_name,
+            email_address=args.email_address,
+            purpose=args.purpose,
         )
     if args.command == "debsign" and args.passthrough_args and not args.build:
         parser.error("arguments after '--' require debsign --build")
@@ -573,6 +631,21 @@ def run_setup(run_config: SetupCmd) -> None:
     elif isinstance(run_config, ListKeysCmd):
         key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
         print("\n".join(" ".join(row) for row in key_info))
+    elif isinstance(run_config, CsrCmd):
+        setup.generate_csr(
+            run_config.config,
+            run_config.key_id,
+            run_config.output,
+            run_config.force_overwrite,
+            run_config.country,
+            run_config.state_or_province,
+            run_config.locality,
+            run_config.organization,
+            run_config.organizational_unit,
+            run_config.common_name,
+            run_config.email_address,
+            run_config.purpose,
+        )
     else:
         raise NotImplementedError
 

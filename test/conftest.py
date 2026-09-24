@@ -100,7 +100,10 @@ activate = 1
 
 [pkcs11_sect]
 activate = 1
+# work around openssl-projects/pkcs11-provider#634, #187
 pkcs11-module-block-operations = digest
+# work around softhsm/SoftHSMv2#729, #780, #897
+pkcs11-module-quirks = no-deinit
 """)
     monkeypatch.setenv("OPENSSL_CONF", str(openssl_conf))
 
