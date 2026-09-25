@@ -8,8 +8,11 @@ import multiprocessing
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
+from functools import cached_property
 from importlib.metadata import version
 from pathlib import Path
+from typing import TypeVar
 
 import yaml
 from platformdirs import user_config_path
@@ -37,9 +40,21 @@ DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
 
 @dataclass
-class SigningRunBase:
-    config: Path
+class BaseCmd:
+    config_path: Path
     output: Path
+
+    @cached_property
+    def config(self) -> Config:
+        try:
+            cfg_dict = yaml.safe_load(self.config_path.read_text()) or {}
+        except OSError as e:
+            raise OpensighubError(f"Could not read config file: {e}") from e
+        return Config.from_dict(cfg_dict)
+
+
+@dataclass
+class SigningBaseCmd(BaseCmd):
     parallel: int
     force_overwrite: bool
 
@@ -50,7 +65,7 @@ class SigningRunBase:
 
 
 @dataclass
-class DebianRun(SigningRunBase):
+class DebSignCmd(SigningBaseCmd):
     jobs: list[DebianSigningJob]
     run_sbuild: bool = False
     sbuild_args: list[str] = field(default_factory=list)
@@ -86,7 +101,7 @@ class DebianRun(SigningRunBase):
 
 
 @dataclass
-class UefiVariableRun(SigningRunBase):
+class UefiVarSignCmd(SigningBaseCmd):
     jobs: list[UefiVariableSignJob]
 
     def processor_factory(
@@ -111,7 +126,7 @@ class UefiVariableRun(SigningRunBase):
 
 
 @dataclass
-class SwuRun(SigningRunBase):
+class SwuSignCmd(SigningBaseCmd):
     jobs: list[SwuSignJob]
 
     def processor_factory(
@@ -136,7 +151,7 @@ class SwuRun(SigningRunBase):
 
 
 @dataclass
-class EfiBinaryRun(SigningRunBase):
+class EfiBinarySignCmd(SigningBaseCmd):
     jobs: list[UefiSignJob]
 
     def processor_factory(
@@ -161,9 +176,37 @@ class EfiBinaryRun(SigningRunBase):
 
 
 @dataclass
-class SetupRun:
-    config: Path
-    setup_command: str | None
+class SoftHsmCmd(BaseCmd):
+    pass
+
+
+@dataclass
+class TestKeysCmd(BaseCmd):
+    pass
+
+
+@dataclass
+class ListKeysCmd(BaseCmd):
+    key_id: str | None
+    columns: list[setup.KeyInfoColumn]
+
+
+@dataclass
+class CsrCmd(BaseCmd):
+    key_id: str
+    force_overwrite: bool
+    country: str | None
+    state_or_province: str | None
+    locality: str | None
+    organization: str | None
+    organizational_unit: str | None
+    common_name: str | None
+    email_address: str | None
+    purpose: list[setup.ExtendedKeyUsage] | None
+
+
+SetupCmd = SoftHsmCmd | TestKeysCmd | ListKeysCmd | CsrCmd
+SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
 debian_example = """examples:
@@ -240,6 +283,21 @@ class PassthroughParser(argparse.ArgumentParser):
         if self._passthrough:
             namespace.passthrough_args = passthrough_args
         return namespace, extras
+
+
+EnumT = TypeVar("EnumT", bound=Enum)
+
+
+def _comma_separated_enum(enum_cls: type[EnumT]) -> Callable[[str], list[EnumT]]:
+    def parse(value: str) -> list[EnumT]:
+        try:
+            return [enum_cls(v) for v in value.split(",") if v]
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(
+                f"{e}. Available: {', '.join(str(m.value) for m in enum_cls)}"
+            ) from e
+
+    return parse
 
 
 def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
@@ -385,6 +443,50 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         description="Generate a self-signed test key in the local SoftHSM token for test purpose"
         " and suitable configuration file.",
     )
+    listkeys_parser = setup_sub_parsers.add_parser(
+        "listkeys",
+        help="List information about configured signing keys.",
+        description="Prints one key per line with values in space-separated columns.",
+    )
+    listkeys_parser.add_argument(
+        "key_id",
+        nargs="?",
+        help="ID of the key in config.yaml. If omitted, all keys are listed.",
+    )
+    listkeys_parser.add_argument(
+        "--columns",
+        type=_comma_separated_enum(setup.KeyInfoColumn),
+        default=[setup.KeyInfoColumn.KEYID, setup.KeyInfoColumn.URI, setup.KeyInfoColumn.STATUS],
+        help="Comma-separated list of columns to print, in order. Available: "
+        f"{', '.join(setup.KeyInfoColumn)} (status: available/loginrequired/offline; runs "
+        "openssl storeutl). Defaults to 'keyid,uri,status'.",
+    )
+    csr_parser = setup_sub_parsers.add_parser(
+        "csr",
+        help="Generate certificate signing request for a configured signing key.",
+        description="Generate a PEM encoded PKCS#10 certificate signing request (CSR) and store it "
+        "as <key-id>.csr into the output directory. The CSR can be submitted to a certificate authority "
+        "to request a signer certificate.",
+    )
+    key_id_arg = csr_parser.add_argument(
+        "key_id",
+        help="ID of the key in config.yaml's signing-keys section to generate a CSR for.",
+    )
+    csr_parser.add_argument("--country", help="Subject countryName (C).")
+    csr_parser.add_argument("--state-or-province", help="Subject stateOrProvinceName (ST).")
+    csr_parser.add_argument("--locality", help="Subject localityName (L).")
+    csr_parser.add_argument("--organization", help="Subject organizationName (O).")
+    csr_parser.add_argument("--organizational-unit", help="Subject organizationalUnitName (OU).")
+    csr_parser.add_argument("--common-name", help="Subject commonName (CN).")
+    csr_parser.add_argument("--email-address", help="Subject emailAddress.")
+    csr_parser.add_argument(
+        "--purpose",
+        type=_comma_separated_enum(setup.ExtendedKeyUsage),
+        default=None,
+        help="Comma-separated X.509v3 extended key usage purpose(s) (OID 2.5.29.37, RFC 5280 "
+        f"§4.2.1.12) to request in the CSR. Available: {', '.join(setup.ExtendedKeyUsage)}. "
+        "Whether the issuing CA honors this depends on its policy.",
+    )
 
     if generate_completion:
         import shtab
@@ -399,6 +501,9 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         )
         swu_arg.complete = shtab.FILE  # type: ignore[attr-defined]
         binaries_arg.complete = shtab.FILE  # type: ignore[attr-defined]
+        key_id_arg.complete = shtab.cmd(  # type: ignore[attr-defined]
+            "opensighub setup listkeys --columns keyid 2>/dev/null"
+        )
 
     return parser
 
@@ -407,20 +512,44 @@ def get_shtab_parser() -> argparse.ArgumentParser:
     return get_parser(generate_completion=True)
 
 
-def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
+def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
     parser = get_parser()
     args = parser.parse_args(arg_list)
     if args.command is None:
         parser.print_help()
         parser.exit()
-    if args.command == "setup":
-        return SetupRun(config=Path(args.config), setup_command=args.setup_command)
+    if args.command == "setup" and args.setup_command == "softhsm":
+        return SoftHsmCmd(config_path=Path(args.config), output=Path(args.output))
+    if args.command == "setup" and args.setup_command == "testkeys":
+        return TestKeysCmd(config_path=Path(args.config), output=Path(args.output))
+    if args.command == "setup" and args.setup_command == "listkeys":
+        return ListKeysCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            columns=args.columns,
+        )
+    if args.command == "setup" and args.setup_command == "csr":
+        return CsrCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            force_overwrite=args.yes,
+            country=args.country,
+            state_or_province=args.state_or_province,
+            locality=args.locality,
+            organization=args.organization,
+            organizational_unit=args.organizational_unit,
+            common_name=args.common_name,
+            email_address=args.email_address,
+            purpose=args.purpose,
+        )
     if args.command == "debsign" and args.passthrough_args and not args.build:
         parser.error("arguments after '--' require debsign --build")
     if args.command == "swusign":
         outfile = Path(args.output) / Path(args.swu).name
-        return SwuRun(
-            config=Path(args.config),
+        return SwuSignCmd(
+            config_path=Path(args.config),
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
             parallel=args.parallel,
@@ -428,8 +557,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
         )
     if args.command == "efibinarysign":
         detached = args.detached
-        return EfiBinaryRun(
-            config=Path(args.config),
+        return EfiBinarySignCmd(
+            config_path=Path(args.config),
             output=Path(args.output),
             jobs=[
                 UefiSignJob(
@@ -444,8 +573,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
             force_overwrite=args.yes,
         )
     if args.command == "uefivarsign":
-        return UefiVariableRun(
-            config=Path(args.config),
+        return UefiVarSignCmd(
+            config_path=Path(args.config),
             output=Path(args.output),
             jobs=[
                 UefiVariableSignJob(
@@ -457,8 +586,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
             force_overwrite=args.yes,
         )
     elif args.command == "debsign":
-        return DebianRun(
-            config=Path(args.config),
+        return DebSignCmd(
+            config_path=Path(args.config),
             output=Path(args.output),
             jobs=[
                 DebianSigningJob(
@@ -478,34 +607,45 @@ def parse_args(arg_list: list[str] | None = None) -> SigningRunBase | SetupRun:
     raise NotImplementedError
 
 
-def sign_main(run_config: SigningRunBase):
+def sign_main(run_config: SigningCmd):
     logger = logging.getLogger("opensighub")
 
     if not run_config or run_config is NotImplementedError:
         return
 
-    try:
-        with open(run_config.config) as fp:
-            cfg_dict = yaml.safe_load(fp)
-    except OSError as e:
-        raise OpensighubError(f"Could not read config file: {e}") from e
-    config = Config.from_dict(cfg_dict)
-
-    logger.setLevel(config.log_level)
+    logger.setLevel(run_config.config.log_level)
 
     with multiprocessing.Manager() as manager:
         shared_data = manager.dict()
         shared_data_lock = manager.Lock()
         with MultiprocessingCertCache(shared_data, shared_data_lock) as cert_cache:
-            process = run_config.processor_factory(config, cert_cache)
+            process = run_config.processor_factory(run_config.config, cert_cache)
             process()
 
 
-def run_setup(run_config: SetupRun):
-    if run_config.setup_command == "softhsm":
-        setup.setup_local_token(run_config.config)
-    elif run_config.setup_command == "testkeys":
-        setup.setup_testenv_keys(run_config.config)
+def run_setup(run_config: SetupCmd) -> None:
+    if isinstance(run_config, SoftHsmCmd):
+        setup.setup_local_token(run_config.config_path)
+    elif isinstance(run_config, TestKeysCmd):
+        setup.setup_testenv_keys(run_config.config_path)
+    elif isinstance(run_config, ListKeysCmd):
+        key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
+        print("\n".join(" ".join(row) for row in key_info))
+    elif isinstance(run_config, CsrCmd):
+        setup.generate_csr(
+            run_config.config,
+            run_config.key_id,
+            run_config.output,
+            run_config.force_overwrite,
+            run_config.country,
+            run_config.state_or_province,
+            run_config.locality,
+            run_config.organization,
+            run_config.organizational_unit,
+            run_config.common_name,
+            run_config.email_address,
+            run_config.purpose,
+        )
     else:
         raise NotImplementedError
 
@@ -515,13 +655,13 @@ def main():
     logging.getLogger("opensighub").setLevel(logging.INFO)
 
     run_config = parse_args()
-    setup.enable_local_softhsm2(run_config.config)
+    setup.enable_local_softhsm2(run_config.config_path)
 
     try:
-        if isinstance(run_config, SetupRun):
+        if isinstance(run_config, SetupCmd):
             run_setup(run_config)
-            return
-        sign_main(run_config)
+        elif isinstance(run_config, SigningCmd):
+            sign_main(run_config)
     except OpensighubError as e:
         print(f"opensighub: error: {e}", file=sys.stderr)
         sys.exit(1)

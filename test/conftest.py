@@ -100,7 +100,10 @@ activate = 1
 
 [pkcs11_sect]
 activate = 1
+# work around openssl-projects/pkcs11-provider#634, #187
 pkcs11-module-block-operations = digest
+# work around softhsm/SoftHSMv2#729, #780, #897
+pkcs11-module-quirks = no-deinit
 """)
     monkeypatch.setenv("OPENSSL_CONF", str(openssl_conf))
 
@@ -332,4 +335,11 @@ def integration_config_yaml_file(tmp_path, integration_config_yaml):
 @pytest.fixture
 def integration_config(integration_config_yaml):
     cfg_dict = yaml.safe_load(integration_config_yaml)
+    return Config.from_dict(cfg_dict)
+
+
+@pytest.fixture
+def unit_config(unit_config_yaml):
+    # repo_pubkey_file, signing_config_yaml_block
+    cfg_dict = yaml.safe_load(unit_config_yaml)
     return Config.from_dict(cfg_dict)

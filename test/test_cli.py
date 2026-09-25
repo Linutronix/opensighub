@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from opensighub.cli import DebianRun, EfiBinaryRun, UefiVariableRun, parse_args, sign_main
+from opensighub.cli import DebSignCmd, EfiBinarySignCmd, UefiVarSignCmd, parse_args, sign_main
 from opensighub.debian import DebianSigningJob
 from opensighub.signers import UefiSignJob, UefiVariableSignJob
 from opensighub.util import OpensighubError
@@ -23,8 +23,8 @@ def test_cli():
         "my_var_2:myvar2.bin",
     ]
     run_config = parse_args(argv)
-    assert run_config == UefiVariableRun(
-        config=Path("config.yaml"),
+    assert run_config == UefiVarSignCmd(
+        config_path=Path("config.yaml"),
         jobs=[
             UefiVariableSignJob("my_var_1", Path("myvar1.bin"), Path("/test/dir/my_var_1.auth")),
             UefiVariableSignJob("my_var_2", Path("myvar2.bin"), Path("/test/dir/my_var_2.auth")),
@@ -46,8 +46,8 @@ def test_cli_efibinarysign_attached_default():
         "vmlinuz",
     ]
     run_config = parse_args(argv)
-    assert run_config == EfiBinaryRun(
-        config=Path("config.yaml"),
+    assert run_config == EfiBinarySignCmd(
+        config_path=Path("config.yaml"),
         jobs=[
             UefiSignJob(Path("uki.efi"), Path("/test/dir/uki.efi"), detached=False),
             UefiSignJob(Path("vmlinuz"), Path("/test/dir/vmlinuz"), detached=False),
@@ -59,8 +59,8 @@ def test_cli_efibinarysign_attached_default():
 
 
 def test_sign_main_missing_config_raises_opensighub_error(tmp_path):
-    run_config = EfiBinaryRun(
-        config=tmp_path / "nonexistent-config.yaml",
+    run_config = EfiBinarySignCmd(
+        config_path=tmp_path / "nonexistent-config.yaml",
         output=tmp_path,
         jobs=[],
         parallel=5,
@@ -91,8 +91,8 @@ def test_cli_debsign_build_passes_through_sbuild_args():
         "--no-clean-source",
     ]
     run_config = parse_args(argv)
-    assert run_config == DebianRun(
-        config=Path("config.yaml"),
+    assert run_config == DebSignCmd(
+        config_path=Path("config.yaml"),
         jobs=[
             DebianSigningJob(
                 signing_template="foo-signed-template",
@@ -144,8 +144,8 @@ def test_cli_efibinarysign_detached():
         "vmlinuz",
     ]
     run_config = parse_args(argv)
-    assert run_config == EfiBinaryRun(
-        config=Path("config.yaml"),
+    assert run_config == EfiBinarySignCmd(
+        config_path=Path("config.yaml"),
         jobs=[
             UefiSignJob(Path("vmlinuz"), Path("/test/dir/vmlinuz.sig"), detached=True),
         ],

@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from opensighub.cli import UefiVariableRun, sign_main
+from opensighub.cli import UefiVarSignCmd, sign_main
 from opensighub.signers import (
     Hab4Sign,
     LinuxModuleSign,
@@ -103,8 +103,8 @@ def test_hab4_sign(softhsm, integration_config, sample_hab4csf_file, sample_blob
 def test_uefi_variable_sign_cli(softhsm, integration_config_yaml_file, sample_blob, tmp_path):
     signed_artifact = tmp_path / "myvar.auth"
     sign_main(
-        UefiVariableRun(
-            config=integration_config_yaml_file,
+        UefiVarSignCmd(
+            config_path=integration_config_yaml_file,
             output=tmp_path,
             jobs=[
                 UefiVariableSignJob(

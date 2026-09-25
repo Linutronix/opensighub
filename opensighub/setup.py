@@ -4,13 +4,18 @@
 
 import logging
 import os
+import re
 import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import replace
+from enum import StrEnum
 from pathlib import Path
 
 import yaml
 from platformdirs import user_data_path
 
+from opensighub.config import Config, SigningKey
+from opensighub.signers import confirm_overwrite
 from opensighub.util import OpensighubError, Pkcs11Uri, Pkcs11UriQattr, raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
@@ -193,3 +198,150 @@ def setup_testenv_keys(config_path: Path) -> None:
     config.setdefault("uefi", {"key": SOFTHSM_TEST_UEFI_KEY_LABEL})
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     logger.info(f"Done. Test key entered in {config_path}.")
+
+
+class KeyInfoColumn(StrEnum):
+    KEYID = "keyid"
+    URI = "uri"
+    STATUS = "status"
+
+
+class ExtendedKeyUsage(StrEnum):
+    """RFC 5280 §4.2.1.12 (OID 2.5.29.37) well-known purposes; openssl's symbolic names."""
+
+    SERVER_AUTH = "serverAuth"
+    CLIENT_AUTH = "clientAuth"
+    CODE_SIGNING = "codeSigning"
+    EMAIL_PROTECTION = "emailProtection"
+    TIME_STAMPING = "timeStamping"
+    OCSP_SIGNING = "OCSPSigning"
+
+
+def _csr_openssl_subject(
+    country: str | None,
+    state_or_province: str | None,
+    locality: str | None,
+    organization: str | None,
+    organizational_unit: str | None,
+    common_name: str | None,
+    email_address: str | None,
+) -> str:
+    fields = [
+        ("C", country),
+        ("ST", state_or_province),
+        ("L", locality),
+        ("O", organization),
+        ("OU", organizational_unit),
+        ("CN", common_name),
+        ("emailAddress", email_address),
+    ]
+    escaped = [(name, value.replace("/", "\\/")) for name, value in fields if value]
+    return "/" + "/".join(f"{name}={value}" for name, value in escaped)
+
+
+def generate_csr(
+    config: Config,
+    key_id: str,
+    output_dir: Path,
+    force_overwrite: bool = False,
+    country: str | None = None,
+    state_or_province: str | None = None,
+    locality: str | None = None,
+    organization: str | None = None,
+    organizational_unit: str | None = None,
+    common_name: str | None = None,
+    email_address: str | None = None,
+    purpose: Sequence[ExtendedKeyUsage] | None = None,
+) -> None:
+    raise_if_tool_missing("openssl")
+    if key_id not in config.signing_keys:
+        raise OpensighubError(f"No signing key '{key_id}'")
+    if purpose and (unknown := [p for p in purpose if p not in list(ExtendedKeyUsage)]):
+        raise OpensighubError(
+            f"Unsupported purpose(s): {', '.join(unknown)}. "
+            f"Available: {', '.join(ExtendedKeyUsage)}"
+        )
+
+    csr_path = output_dir / f"{key_id}.csr"
+    if csr_path.exists():
+        confirm_overwrite(csr_path, force_overwrite)
+    csr_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Generating CSR for key '{key_id}' at {csr_path}")
+    subprocess.check_call(
+        [
+            "openssl",
+            "req",
+            "-provider",
+            "pkcs11",
+            "-new",
+            "-batch",
+            "-subj",
+            _csr_openssl_subject(
+                country,
+                state_or_province,
+                locality,
+                organization,
+                organizational_unit,
+                common_name,
+                email_address,
+            ),
+            *(["-addext", f"extendedKeyUsage={','.join(purpose)}"] if purpose else []),
+            "-key",
+            config.signing_keys[key_id].pkcs11_uri,
+            "-out",
+            str(csr_path),
+        ]
+    )
+
+
+def _key_status(key: SigningKey) -> str:
+    try:
+        Pkcs11Uri.try_parse(key.pkcs11_uri)
+        provider = "pkcs11"
+    except ValueError:
+        return "invalid"
+    try:
+        result = subprocess.run(
+            ["openssl", "storeutl", "-provider", provider, key.pkcs11_uri],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            start_new_session=True,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "offline"
+    match = re.search(r"Total found:\s+(\d+)", result.stdout)
+    if match and int(match.group(1)) > 0:
+        return "available"
+    if "pass phrase" in result.stderr or "PIN" in result.stderr:
+        return "loginrequired"
+    return "offline"
+
+
+KEY_INFO_COLUMNS: dict[str, Callable[[str, SigningKey], str]] = {
+    KeyInfoColumn.KEYID: lambda key_id, _: key_id,
+    KeyInfoColumn.URI: lambda _, key: key.pkcs11_uri,
+    KeyInfoColumn.STATUS: lambda _, key: _key_status(key),
+}
+
+
+def get_key_info(
+    config: Config, columns: Sequence[KeyInfoColumn], key_id: str | None = None
+) -> list[list[str]]:
+    if unknown := [c for c in columns if c not in KEY_INFO_COLUMNS]:
+        raise OpensighubError(
+            f"Unsupported column(s): {', '.join(unknown)}. Available: {', '.join(KEY_INFO_COLUMNS)}"
+        )
+    if "status" in columns:
+        raise_if_tool_missing("openssl")
+
+    key_ids = [key_id] if key_id is not None else config.signing_keys.keys()
+    result = []
+    for k in key_ids:
+        if k not in config.signing_keys:
+            raise OpensighubError(f"Key '{key_id}' is not configured")
+        result.append([KEY_INFO_COLUMNS[column](k, config.signing_keys[k]) for column in columns])
+    return result
