@@ -40,7 +40,7 @@ Set up configuration for user-local SoftHSM token and keys test key in it
 
 ```
 opensighub setup softhsm
-opensighub setup testkeys
+opensighub setup genkey
 ```
 
 Sign systemd-boot from the Debian archive with your own key

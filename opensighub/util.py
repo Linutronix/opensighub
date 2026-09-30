@@ -2,16 +2,20 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import logging
 import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import MutableMapping
+from collections.abc import Iterator, MutableMapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, fields, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 from urllib.parse import parse_qsl, urlparse, urlunparse
+
+logger = logging.getLogger("opensighub")
 
 
 class OpensighubError(Exception):
@@ -95,6 +99,11 @@ class Pkcs11Uri:
     def to_private_pubkey(self):
         return replace(self, type="private"), replace(self, type="public")
 
+    def pin_source_content(self) -> bytes:
+        if self.qattr is not None and self.qattr.pin_source is not None:
+            return (Path(self.qattr.pin_source).read_text() + "\n").encode()
+        return b""
+
     def __str__(self):
         path = [
             f"{field.name.replace('_', '-')}={getattr(self, field.name)}"
@@ -169,3 +178,181 @@ class MultiprocessingCertCache(CertCache):
     def exported_from_pkcs11(self, pkcs11uri: Pkcs11Uri) -> Path:
         with self.shared_cert_dict_lock:
             return super().exported_from_pkcs11(pkcs11uri)
+
+
+@dataclass
+class Pkcs11Object:
+    uri: str
+    objclass: str
+    label: str
+    id: str
+    key_type: str | None = None
+
+
+@dataclass
+class Subject:
+    country: str | None = None
+    state_or_province: str | None = None
+    locality: str | None = None
+    organization: str | None = None
+    organizational_unit: str | None = None
+    common_name: str | None = None
+    email_address: str | None = None
+
+
+class KeyType(StrEnum):
+    RSA = "rsa"
+    ECDSA = "ecdsa"
+
+
+@dataclass
+class KeyProperties:
+    key_type: KeyType = KeyType.RSA
+    bits: int | None = 4096
+    curve: str | None = None
+
+
+def _subprocess_error_detail(e: subprocess.CalledProcessError) -> str:
+    return e.stderr.decode().strip() if e.stderr else str(e)
+
+
+def pkcs11_list_objects(token_uri: Pkcs11Uri) -> Iterator[Pkcs11Object]:
+    try:
+        objects = subprocess.check_output(
+            ["p11-kit", "list-objects", str(token_uri)], stderr=subprocess.PIPE
+        ).decode()
+    except subprocess.CalledProcessError as e:
+        raise OpensighubError(
+            f"Failed to list objects on '{token_uri}': {_subprocess_error_detail(e)}"
+        ) from e
+    attrs: dict[str, str] = {}
+
+    def flush() -> Iterator[Pkcs11Object]:
+        if attrs:
+            attrs["objclass"] = attrs.pop("class")
+            yield Pkcs11Object(**attrs)
+            attrs.clear()
+
+    for line in objects.splitlines():
+        k, sep, v = line.partition(": ")
+        if not sep:
+            continue
+        k = k.strip()
+        v = v.strip()
+        if k == "Object":
+            yield from flush()
+        elif k in ("uri", "class", "key-type", "label", "id"):
+            attrs[k.replace("-", "_")] = v
+    yield from flush()
+
+
+def pkcs11_object_exists(uri: Pkcs11Uri) -> bool:
+    assert uri.object is not None
+    key_id_hex = uri.object.encode().hex()
+    scope_uri = replace(uri, object=None, id=None)
+    return any(
+        obj.label == uri.object or obj.id == key_id_hex for obj in pkcs11_list_objects(scope_uri)
+    )
+
+
+def pkcs11_generate_keypair(token_uri: Pkcs11Uri, key_id: str, key_properties: KeyProperties):
+    try:
+        subprocess.run(
+            [
+                "p11-kit",
+                "generate-keypair",
+                "--label",
+                key_id,
+                "--id",
+                key_id.encode().hex(),
+                "--type",
+                key_properties.key_type,
+                *(
+                    ["--bits", str(key_properties.bits)]
+                    if key_properties.key_type == KeyType.RSA
+                    else ["--curve", str(key_properties.curve)]
+                ),
+                "--login",
+                str(token_uri),
+            ],
+            input=token_uri.pin_source_content(),
+            start_new_session=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise OpensighubError(
+            f"Failed to generate keypair '{key_id}' on '{token_uri}': {_subprocess_error_detail(e)}"
+        ) from e
+
+
+def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
+    try:
+        subprocess.run(
+            [
+                "p11-kit",
+                "import-object",
+                f"--file={pem_file}",
+                "--label",
+                key_id,
+                "--login",
+                str(token_uri),
+            ],
+            input=token_uri.pin_source_content(),
+            start_new_session=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise OpensighubError(
+            f"Failed to import object '{key_id}' on '{token_uri}': {_subprocess_error_detail(e)}"
+        ) from e
+
+
+def x509_generate_self_signed_cert(
+    token: str, pkcs11_key_id: str, pin_source: str | None, cert_pem: Path
+):
+    try:
+        subprocess.check_call(
+            [
+                "openssl",
+                "req",
+                "-provider",
+                "pkcs11",
+                "-new",
+                "-batch",
+                "-x509",
+                "-days",
+                "3650",
+                "-subj",
+                csr_openssl_subject(Subject(common_name="opensighub")),
+                "-key",
+                str(
+                    Pkcs11Uri(
+                        token=token,
+                        object=pkcs11_key_id,
+                        qattr=Pkcs11UriQattr(pin_source=pin_source) if pin_source else None,
+                    )
+                ),
+                "-out",
+                str(cert_pem),
+            ],
+            start_new_session=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise OpensighubError(
+            f"Failed to generate self-signed certificate for '{pkcs11_key_id}' on token "
+            f"'{token}': {_subprocess_error_detail(e)}"
+        ) from e
+
+
+def csr_openssl_subject(subject: Subject) -> str:
+    fields = [
+        ("C", subject.country),
+        ("ST", subject.state_or_province),
+        ("L", subject.locality),
+        ("O", subject.organization),
+        ("OU", subject.organizational_unit),
+        ("CN", subject.common_name),
+        ("emailAddress", subject.email_address),
+    ]
+    escaped = [(name, value.replace("/", "\\/")) for name, value in fields if value]
+    return "/" + "/".join(f"{name}={value}" for name, value in escaped)
