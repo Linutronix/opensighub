@@ -254,7 +254,8 @@ def generate_csr(
     purpose: Sequence[ExtendedKeyUsage] | None = None,
 ) -> None:
     raise_if_tool_missing("openssl")
-    if key_id not in config.signing_keys:
+    signing_key = config.signing_keys.get(key_id)
+    if signing_key is None or signing_key.pkcs11_uri is None:
         raise OpensighubError(f"No signing key '{key_id}'")
     if purpose and (unknown := [p for p in purpose if p not in list(ExtendedKeyUsage)]):
         raise OpensighubError(
@@ -288,7 +289,7 @@ def generate_csr(
             ),
             *(["-addext", f"extendedKeyUsage={','.join(purpose)}"] if purpose else []),
             "-key",
-            config.signing_keys[key_id].pkcs11_uri,
+            signing_key.pkcs11_uri,
             "-out",
             str(csr_path),
         ]
@@ -296,6 +297,8 @@ def generate_csr(
 
 
 def _key_status(key: SigningKey) -> str:
+    if key.pkcs11_uri is None:
+        return "invalid"
     try:
         Pkcs11Uri.try_parse(key.pkcs11_uri)
         provider = "pkcs11"
@@ -321,9 +324,13 @@ def _key_status(key: SigningKey) -> str:
     return "offline"
 
 
+def _key_uri(key: SigningKey) -> str:
+    return key.pkcs11_uri or ""
+
+
 KEY_INFO_COLUMNS: dict[str, Callable[[str, SigningKey], str]] = {
     KeyInfoColumn.KEYID: lambda key_id, _: key_id,
-    KeyInfoColumn.URI: lambda _, key: key.pkcs11_uri,
+    KeyInfoColumn.URI: lambda _, key: _key_uri(key),
     KeyInfoColumn.STATUS: lambda _, key: _key_status(key),
 }
 

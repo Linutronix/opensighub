@@ -3,14 +3,18 @@
 # SPDX-License-Identifier: 0BSD
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from opensighub.cli import UefiVarSignCmd, sign_main
+from opensighub.config import Hab4SigningCfg, RawSigningCfg
 from opensighub.signers import (
     Hab4Sign,
+    Hab4SignJob,
     LinuxModuleSign,
     OpteeTaSign,
+    RawSignJob,
     RpiEepromSign,
     RpiSign,
     SwuSign,
@@ -18,7 +22,7 @@ from opensighub.signers import (
     UefiVariableSign,
     UefiVariableSignJob,
 )
-from opensighub.util import CertCache, Pkcs11Uri
+from opensighub.util import CertCache, OpensighubError, Pkcs11Uri
 
 
 @pytest.mark.integration
@@ -99,6 +103,25 @@ def test_hab4_sign(softhsm_shared, integration_config, sample_hab4csf_file, samp
             "Signature file created",
         ]
     )
+
+
+def test_hab4_sign_preflight_requires_complete_config():
+    job = Hab4SignJob(
+        csf_txt_in_path=Path("in.txt"), csf_bin_out_path=Path("out.bin"), auth_data_prefix=Path("/")
+    )
+    with CertCache() as cc:
+        hab4_signer = Hab4Sign(cc, Hab4SigningCfg())
+        with pytest.raises(OpensighubError, match="img_key, csf_key, and srk_index"):
+            hab4_signer.preflight(job)
+
+
+def test_raw_sign_preflight_requires_hash(unit_config):
+    job = RawSignJob(artifact=Path("in.bin"), signed_artifact=Path("out.bin"))
+    key = unit_config.signing_keys["acme-2025-ta-root"]
+    with CertCache() as cc:
+        raw_signer = RpiSign(cc, RawSigningCfg(key=key))
+        with pytest.raises(OpensighubError, match="'hash' configured"):
+            raw_signer.preflight(job)
 
 
 @pytest.mark.integration
