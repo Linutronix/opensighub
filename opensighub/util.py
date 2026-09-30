@@ -264,7 +264,7 @@ def pkcs11_object_exists(uri: Pkcs11Uri) -> bool:
 
 def pkcs11_generate_keypair(token_uri: Pkcs11Uri, key_id: str, key_properties: KeyProperties):
     try:
-        subprocess.run(
+        result = subprocess.run(
             [
                 "p11-kit",
                 "generate-keypair",
@@ -283,6 +283,7 @@ def pkcs11_generate_keypair(token_uri: Pkcs11Uri, key_id: str, key_properties: K
                 str(token_uri),
             ],
             input=token_uri.pin_source_content(),
+            capture_output=True,
             start_new_session=True,
             check=True,
         )
@@ -290,11 +291,12 @@ def pkcs11_generate_keypair(token_uri: Pkcs11Uri, key_id: str, key_properties: K
         raise OpensighubError(
             f"Failed to generate keypair '{key_id}' on '{token_uri}': {_subprocess_error_detail(e)}"
         ) from e
+    log_subprocess_output(result)
 
 
 def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
     try:
-        subprocess.run(
+        result = subprocess.run(
             [
                 "p11-kit",
                 "import-object",
@@ -305,6 +307,7 @@ def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
                 str(token_uri),
             ],
             input=token_uri.pin_source_content(),
+            capture_output=True,
             start_new_session=True,
             check=True,
         )
@@ -312,13 +315,14 @@ def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
         raise OpensighubError(
             f"Failed to import object '{key_id}' on '{token_uri}': {_subprocess_error_detail(e)}"
         ) from e
+    log_subprocess_output(result)
 
 
 def x509_generate_self_signed_cert(
     token: str, pkcs11_key_id: str, pin_source: str | None, cert_pem: Path
 ):
     try:
-        subprocess.check_call(
+        result = subprocess.run(
             [
                 "openssl",
                 "req",
@@ -342,20 +346,23 @@ def x509_generate_self_signed_cert(
                 "-out",
                 str(cert_pem),
             ],
+            capture_output=True,
             start_new_session=True,
+            check=True,
         )
     except subprocess.CalledProcessError as e:
         raise OpensighubError(
             f"Failed to generate self-signed certificate for '{pkcs11_key_id}' on token "
             f"'{token}': {_subprocess_error_detail(e)}"
         ) from e
+    log_subprocess_output(result)
 
 
 def x509_generate_csr(
     key_uri: str, subject: Subject, csr_path: Path, purpose: Sequence[str] | None = None
 ):
     try:
-        subprocess.check_call(
+        result = subprocess.run(
             [
                 "openssl",
                 "req",
@@ -371,11 +378,14 @@ def x509_generate_csr(
                 "-out",
                 str(csr_path),
             ],
+            capture_output=True,
+            check=True,
         )
     except subprocess.CalledProcessError as e:
         raise OpensighubError(
             f"Failed to generate CSR for '{key_uri}': {_subprocess_error_detail(e)}"
         ) from e
+    log_subprocess_output(result)
 
 
 def key_status(pkcs11_uri: str | None) -> KeyStatus:
@@ -418,3 +428,10 @@ def csr_openssl_subject(subject: Subject) -> str:
     ]
     escaped = [(name, value.replace("/", "\\/")) for name, value in fields if value]
     return "/" + "/".join(f"{name}={value}" for name, value in escaped)
+
+
+def log_subprocess_output(result: subprocess.CompletedProcess[bytes]) -> None:
+    if result.stdout:
+        logger.debug(result.stdout.decode().strip())
+    if result.stderr:
+        logger.debug(result.stderr.decode().strip())
