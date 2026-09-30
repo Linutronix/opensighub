@@ -65,8 +65,8 @@ def setup_local_token(config_path: Path) -> None:
     else:
         logger.warning(f"{pin_file} already exists, leaving it untouched")
 
-    env = os.environ | {"SOFTHSM2_CONF": str(softhsm2_conf)}
-    slots = subprocess.check_output(["softhsm2-util", "--show-slots"], env=env).decode()
+    enable_local_softhsm2(config_path)
+    slots = subprocess.check_output(["softhsm2-util", "--show-slots"]).decode()
     if not SOFTHSM_LOCAL_TOKEN_LABEL in slots:
         logger.info(f"Setting up local SoftHSM token in {token_dir}")
         subprocess.check_call(
@@ -81,7 +81,6 @@ def setup_local_token(config_path: Path) -> None:
                 "--so-pin",
                 SOFTHSM_LOCAL_SO_PIN,
             ],
-            env=env,
         )
     else:
         logger.warning(f"Token '{SOFTHSM_LOCAL_TOKEN_LABEL}' already exists, skipping init")
