@@ -31,6 +31,10 @@ list and examples of each; only a summary is given here.
 - `opensighub swusign FILE` — sign or resign a swupdate `.swu` file.
 - `opensighub setup softhsm` — set up an isolated, user-local SoftHSM token,
   for the quickstart. Not meant for production keys.
+- `opensighub setup genkey` / `setup csr` / `setup importcert` / `setup delkey` —
+  generate, request a certificate for, install a certificate on, and retire
+  a production signing key. See the [Key Management
+  Workflow](key-management.md) for the full walkthrough.
 
 ### Signing in place and `--output`
 

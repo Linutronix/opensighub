@@ -56,4 +56,5 @@ opensighub --output ./signed debsign \
 ## Documentation
 
 - [User Manual](https://github.com/Linutronix/opensighub/blob/main/docs/user-manual.md)
+- [Key Management Workflow](https://github.com/Linutronix/opensighub/blob/main/docs/key-management.md)
 - [Development](https://github.com/Linutronix/opensighub/blob/main/docs/development.md)
