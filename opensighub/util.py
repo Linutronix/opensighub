@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import base64
+import hashlib
 import logging
 import re
 import shutil
@@ -437,6 +439,52 @@ def key_status(pkcs11_uri: str | None) -> KeyStatus:
     if "pass phrase" in result.stderr or "PIN" in result.stderr:
         return KeyStatus.LOGIN_REQUIRED
     return KeyStatus.OFFLINE
+
+
+def pkcs11_pubkey_hash(uri: Pkcs11Uri) -> str:
+    pubkey_uri = replace(uri, type="public")
+    try:
+        result = subprocess.run(
+            [
+                "openssl",
+                "pkey",
+                "-provider",
+                "pkcs11",
+                "-pubin",
+                "-in",
+                str(pubkey_uri),
+                "-pubout",
+                "-outform",
+                "DER",
+            ],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5,
+            check=True,
+            start_new_session=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise OpensighubError(
+            f"Failed to read public key for '{pubkey_uri}': {_subprocess_error_detail(e)}"
+        ) from e
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise OpensighubError(f"Failed to read public key for '{pubkey_uri}': {e}") from e
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def x509_cert_pubkey_hash(cert_path: Path) -> str:
+    try:
+        pem = subprocess.run(
+            ["openssl", "x509", "-in", str(cert_path), "-pubkey", "-noout"],
+            capture_output=True,
+            check=True,
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        raise OpensighubError(
+            f"Failed to read certificate '{cert_path}': {_subprocess_error_detail(e)}"
+        ) from e
+    der = base64.b64decode(b"".join(pem.splitlines()[1:-1]))
+    return hashlib.sha256(der).hexdigest()
 
 
 def csr_openssl_subject(subject: Subject) -> str:

@@ -16,6 +16,7 @@ from opensighub.setup import (
     get_key_info,
     setup_delkey,
     setup_genkey,
+    setup_importcert,
 )
 from opensighub.util import OpensighubError
 
@@ -61,6 +62,146 @@ def test_setup_delkey_removes_key_from_token_and_config(
         unit_config, [KeyInfoColumn.STATUS], "acme-2025-uefi"
     )  # sanity: unrelated key untouched, and openssl/token still reachable
     assert status[0][0] == "available"
+
+
+def test_setup_importcert_unknown_key_raises(unit_config, unknown_cert):
+    with pytest.raises(OpensighubError, match="not configured"):
+        setup_importcert(unit_config, unknown_cert, key_id="does-not-exist")
+
+
+def test_setup_importcert_key_without_pkcs11_uri_raises(unit_config, unknown_cert):
+    unit_config.signing_keys["broken-key"] = SigningKey(pkcs11_uri=None, cfg_id_init="broken-key")
+    with pytest.raises(OpensighubError, match="not configured"):
+        setup_importcert(unit_config, unknown_cert, key_id="broken-key")
+
+
+def test_setup_importcert_missing_file_raises(tmp_path, unit_config):
+    with pytest.raises(OpensighubError, match="not found"):
+        setup_importcert(unit_config, tmp_path / "does-not-exist.pem", key_id="acme-2025-uefi")
+
+
+def test_setup_importcert_no_matching_key_raises(unit_config, unknown_cert):
+    with pytest.raises(OpensighubError, match="Certificate has no matching key"):
+        setup_importcert(unit_config, unknown_cert)
+
+
+@pytest.mark.integration
+def test_setup_importcert_replaces_certificate(softhsm, unit_config, tmp_path, sample_pin_file):
+    unit_config._source = tmp_path / "config.yaml"
+    setup_genkey(
+        unit_config,
+        "importcert-integration-test",
+        KeyProperties(),
+        token="SoftHSM",
+        pin_source=str(sample_pin_file),
+    )
+    key_uri = unit_config.signing_keys["importcert-integration-test"].pkcs11_uri
+
+    new_cert = tmp_path / "new-cert.pem"
+    subprocess.check_call(
+        [
+            "openssl",
+            "req",
+            "-provider",
+            "pkcs11",
+            "-new",
+            "-batch",
+            "-x509",
+            "-days",
+            "30",
+            "-subj",
+            "/CN=ca-issued-replacement/",
+            "-key",
+            key_uri.replace(
+                "object=importcert-integration-test",
+                "object=importcert-integration-test;type=private",
+            ),
+            "-out",
+            str(new_cert),
+        ]
+    )
+
+    setup_importcert(
+        unit_config, new_cert, key_id="importcert-integration-test", force_overwrite=True
+    )
+
+    cert_pem = subprocess.check_output(
+        [
+            "openssl",
+            "storeutl",
+            "-provider",
+            "pkcs11",
+            "-certs",
+            key_uri.replace(
+                "object=importcert-integration-test", "object=importcert-integration-test;type=cert"
+            ),
+        ]
+    )
+    subject = subprocess.check_output(
+        ["openssl", "x509", "-noout", "-subject"], input=cert_pem
+    ).decode()
+    assert "ca-issued-replacement" in subject
+
+    status = get_key_info(unit_config, [KeyInfoColumn.STATUS], "importcert-integration-test")
+    assert status[0][0] == "available"
+
+
+@pytest.mark.integration
+def test_setup_importcert_finds_matching_key_without_key_id(
+    softhsm, unit_config, tmp_path, sample_pin_file
+):
+    unit_config._source = tmp_path / "config.yaml"
+    setup_genkey(
+        unit_config,
+        "importcert-autodetect-test",
+        KeyProperties(),
+        token="SoftHSM",
+        pin_source=str(sample_pin_file),
+    )
+    key_uri = unit_config.signing_keys["importcert-autodetect-test"].pkcs11_uri
+
+    new_cert = tmp_path / "new-cert.pem"
+    subprocess.check_call(
+        [
+            "openssl",
+            "req",
+            "-provider",
+            "pkcs11",
+            "-new",
+            "-batch",
+            "-x509",
+            "-days",
+            "30",
+            "-subj",
+            "/CN=ca-issued-autodetect/",
+            "-key",
+            key_uri.replace(
+                "object=importcert-autodetect-test",
+                "object=importcert-autodetect-test;type=private",
+            ),
+            "-out",
+            str(new_cert),
+        ]
+    )
+
+    setup_importcert(unit_config, new_cert, force_overwrite=True)
+
+    cert_pem = subprocess.check_output(
+        [
+            "openssl",
+            "storeutl",
+            "-provider",
+            "pkcs11",
+            "-certs",
+            key_uri.replace(
+                "object=importcert-autodetect-test", "object=importcert-autodetect-test;type=cert"
+            ),
+        ]
+    )
+    subject = subprocess.check_output(
+        ["openssl", "x509", "-noout", "-subject"], input=cert_pem
+    ).decode()
+    assert "ca-issued-autodetect" in subject
 
 
 @pytest.mark.integration

@@ -158,6 +158,31 @@ def sample_pin_file(tmp_path):
     return pin_file
 
 
+@pytest.fixture
+def unknown_cert(tmp_path):
+    """A self-signed certificate not tied to any configured signing key."""
+    cert = tmp_path / "unrelated.pem"
+    subprocess.check_call(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(tmp_path / "unrelated.key"),
+            "-days",
+            "1",
+            "-subj",
+            "/CN=unrelated/",
+            "-out",
+            str(cert),
+        ]
+    )
+    return cert
+
+
 def _assert_build(path):
     assert path.exists(), f"{path} missing, run 'invoke build-signables' first"
     return path

@@ -29,7 +29,7 @@ from opensighub.util import CertCache, OpensighubError, Pkcs11Uri, raise_if_tool
 logger = logging.getLogger("opensighub")
 
 
-def confirm_overwrite(path: Path, force_overwrite: bool) -> None:
+def confirm_overwrite(path: Path | str, force_overwrite: bool) -> None:
     if force_overwrite:
         return
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
