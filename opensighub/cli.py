@@ -245,6 +245,11 @@ class GenKeyCmd(BaseCmd):
 
 
 @dataclass
+class DelKeyCmd(BaseCmd):
+    key_id: str
+
+
+@dataclass
 class ListKeysCmd(BaseCmd):
     key_id: str | None
     columns: list[setup.KeyInfoColumn]
@@ -258,7 +263,7 @@ class CsrCmd(BaseCmd):
     purpose: list[setup.ExtendedKeyUsage] | None
 
 
-SetupCmd = SoftHsmCmd | GenKeyCmd | ListKeysCmd | CsrCmd
+SetupCmd = SoftHsmCmd | GenKeyCmd | DelKeyCmd | ListKeysCmd | CsrCmd
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
@@ -537,6 +542,17 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         default=[],
         help=f"Comma-separated: {', '.join(setup.GenKeyUseFor)}.",
     )
+    delkey_parser = setup_sub_parsers.add_parser(
+        "delkey",
+        help="Delete a signing key from its token and from the configuration.",
+        description="Delete all private/public/certificate objects belonging to a signing key "
+        "from its PKCS#11 token (using the URI stored in config), and remove all references to "
+        "it from the configuration.",
+    )
+    delkey_key_id_arg = delkey_parser.add_argument(
+        "key_id",
+        help="ID of the key in config.yaml's signing-keys section to delete.",
+    )
     listkeys_parser = setup_sub_parsers.add_parser(
         "listkeys",
         help="List information about configured signing keys.",
@@ -595,6 +611,7 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         swu_arg.complete = shtab.FILE  # type: ignore[attr-defined]
         binaries_arg.complete = shtab.FILE  # type: ignore[attr-defined]
         key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
+        delkey_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
 
     return parser
 
@@ -624,6 +641,12 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             token=args.token,
             pin_source=args.pin_source,
             use_for=args.use_for,
+        )
+    if args.command == "setup" and args.setup_command == "delkey":
+        return DelKeyCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
         )
     if args.command == "setup" and args.setup_command == "listkeys":
         return ListKeysCmd(
@@ -740,6 +763,8 @@ def run_setup(run_config: SetupCmd) -> None:
             run_config.pin_source,
             run_config.use_for,
         )
+    elif isinstance(run_config, DelKeyCmd):
+        setup.setup_delkey(run_config.config, run_config.key_id)
     elif isinstance(run_config, ListKeysCmd):
         key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
         print("\n".join(" ".join(row) for row in key_info))
