@@ -236,8 +236,12 @@ class SoftHsmCmd(BaseCmd):
 
 
 @dataclass
-class TestKeysCmd(BaseCmd):
-    pass
+class GenKeyCmd(BaseCmd):
+    key_id: str
+    key_properties: setup.KeyProperties
+    token: str
+    pin_source: str | None
+    use_for: list[setup.GenKeyUseFor]
 
 
 @dataclass
@@ -249,18 +253,12 @@ class ListKeysCmd(BaseCmd):
 @dataclass
 class CsrCmd(BaseCmd):
     key_id: str
+    subject: setup.Subject
     force_overwrite: bool
-    country: str | None
-    state_or_province: str | None
-    locality: str | None
-    organization: str | None
-    organizational_unit: str | None
-    common_name: str | None
-    email_address: str | None
     purpose: list[setup.ExtendedKeyUsage] | None
 
 
-SetupCmd = SoftHsmCmd | TestKeysCmd | ListKeysCmd | CsrCmd
+SetupCmd = SoftHsmCmd | GenKeyCmd | ListKeysCmd | CsrCmd
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
@@ -492,11 +490,52 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         help="Set up an isolated, user-local SoftHSM token for test purpose.",
         description="Set up an isolated, user-local SoftHSM token for test purpose.",
     )
-    setup_sub_parsers.add_parser(
-        "testkeys",
-        help="Generate a self-signed test key and suitable configuration file for test purpose.",
-        description="Generate a self-signed test key in the local SoftHSM token for test purpose"
-        " and suitable configuration file.",
+    genkey_parser = setup_sub_parsers.add_parser(
+        "genkey",
+        help="Generate a self-signed key and suitable configuration file.",
+        description="Generate a self-signed key, by default on the local SoftHSM token, and"
+        " suitable configuration file.",
+    )
+    genkey_parser.add_argument(
+        "--key-id",
+        default=setup.SOFTHSM_TEST_UEFI_KEY_LABEL,
+        help="ID to generate the key under in configuration signing-keys section. Defaults to '%(default)s'.",
+    )
+    genkey_parser.add_argument(
+        "--type",
+        dest="key_type",
+        type=setup.KeyType,
+        choices=list(setup.KeyType),
+        default=setup.KeyType.RSA,
+        help="Type of key to generate. Defaults to '%(default)s'.",
+    )
+    genkey_parser.add_argument(
+        "--bits",
+        type=int,
+        default=4096,
+        help="Number of bits for an rsa key. Defaults to %(default)s.",
+    )
+    genkey_parser.add_argument(
+        "--curve",
+        help="Curve name for an ecdsa key, e.g. secp256r1. Required if --type=ecdsa.",
+    )
+    genkey_parser.add_argument(
+        "--token",
+        default=setup.SOFTHSM_LOCAL_TOKEN_LABEL,
+        help="PKCS#11 token to generate the key on. Defaults to the local SoftHSM token"
+        " ('%(default)s').",
+    )
+    genkey_parser.add_argument(
+        "--pin-source",
+        help="Path to a file with the PIN for --token. Defaults to the local SoftHSM token's PIN"
+        " if --token is left at its default; omitted otherwise, assuming the token is set up to"
+        " not require one.",
+    )
+    genkey_parser.add_argument(
+        "--use-for",
+        type=_comma_separated_enum(setup.GenKeyUseFor),
+        default=[],
+        help=f"Comma-separated: {', '.join(setup.GenKeyUseFor)}.",
     )
     listkeys_parser = setup_sub_parsers.add_parser(
         "listkeys",
@@ -572,8 +611,20 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         parser.exit()
     if args.command == "setup" and args.setup_command == "softhsm":
         return SoftHsmCmd(config_path=Path(args.config), output=Path(args.output))
-    if args.command == "setup" and args.setup_command == "testkeys":
-        return TestKeysCmd(config_path=Path(args.config), output=Path(args.output))
+    if args.command == "setup" and args.setup_command == "genkey":
+        return GenKeyCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            key_properties=setup.KeyProperties(
+                key_type=args.key_type,
+                bits=args.bits,
+                curve=args.curve,
+            ),
+            token=args.token,
+            pin_source=args.pin_source,
+            use_for=args.use_for,
+        )
     if args.command == "setup" and args.setup_command == "listkeys":
         return ListKeysCmd(
             config_path=Path(args.config),
@@ -586,14 +637,16 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             config_path=Path(args.config),
             output=Path(args.output),
             key_id=args.key_id,
+            subject=setup.Subject(
+                country=args.country,
+                state_or_province=args.state_or_province,
+                locality=args.locality,
+                organization=args.organization,
+                organizational_unit=args.organizational_unit,
+                common_name=args.common_name,
+                email_address=args.email_address,
+            ),
             force_overwrite=args.yes,
-            country=args.country,
-            state_or_province=args.state_or_province,
-            locality=args.locality,
-            organization=args.organization,
-            organizational_unit=args.organizational_unit,
-            common_name=args.common_name,
-            email_address=args.email_address,
             purpose=args.purpose,
         )
     if args.command == "debsign" and args.passthrough_args and not args.build:
@@ -678,8 +731,15 @@ def sign_main(run_config: SigningCmd):
 def run_setup(run_config: SetupCmd) -> None:
     if isinstance(run_config, SoftHsmCmd):
         setup.setup_local_token(run_config.config_path)
-    elif isinstance(run_config, TestKeysCmd):
-        setup.setup_testenv_keys(run_config.config_path)
+    elif isinstance(run_config, GenKeyCmd):
+        setup.setup_genkey(
+            run_config.config,
+            run_config.key_id,
+            run_config.key_properties,
+            run_config.token,
+            run_config.pin_source,
+            run_config.use_for,
+        )
     elif isinstance(run_config, ListKeysCmd):
         key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
         print("\n".join(" ".join(row) for row in key_info))
@@ -688,14 +748,8 @@ def run_setup(run_config: SetupCmd) -> None:
             run_config.config,
             run_config.key_id,
             run_config.output,
+            run_config.subject,
             run_config.force_overwrite,
-            run_config.country,
-            run_config.state_or_province,
-            run_config.locality,
-            run_config.organization,
-            run_config.organizational_unit,
-            run_config.common_name,
-            run_config.email_address,
             run_config.purpose,
         )
     else:

@@ -20,7 +20,7 @@ Type "opensighub setup softhsm"
 Enter
 Sleep 2s
 
-Type "opensighub setup testkeys"
+Type "opensighub setup genkey"
 Enter
 Sleep 3s
 
