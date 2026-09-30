@@ -25,6 +25,7 @@ from opensighub.util import (
     Pkcs11UriQattr,
     Subject,
     key_status,
+    pkcs11_delete_key,
     pkcs11_generate_keypair,
     pkcs11_import_object,
     pkcs11_object_exists,
@@ -182,6 +183,21 @@ def setup_genkey(
     finally:
         config.save()
     logger.info(f"Key '{key_id}' generated and entered in {config._source}.")
+
+
+def setup_delkey(config: Config, key_id: str) -> None:
+    raise_if_tool_missing("p11-kit")
+    if config._source is None:
+        raise OpensighubError("Config has no source path to save to")
+    signing_key = config.signing_keys.get(key_id)
+    if signing_key is None or signing_key.pkcs11_uri is None:
+        raise OpensighubError(f"No signing key '{key_id}'")
+    key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
+    pkcs11_delete_key(key_uri)
+
+    config.remove_signing_key(key_id)
+    config.save()
+    logger.info(f"Key '{key_id}' deleted from token and removed from {config._source}.")
 
 
 class KeyInfoColumn(StrEnum):
