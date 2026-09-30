@@ -29,9 +29,8 @@ list and examples of each; only a summary is given here.
   authenticated variable with sbvarsign, e.g. for `db`/`dbx`/`KEK`/`PK`
   updates.
 - `opensighub swusign FILE` — sign or resign a swupdate `.swu` file.
-- `opensighub setup softhsm` / `opensighub setup testkeys` — set up an isolated, user-local
-  SoftHSM token and a self-signed test key in it, for the quickstart. Not
-  meant for production keys.
+- `opensighub setup softhsm` — set up an isolated, user-local SoftHSM token,
+  for the quickstart. Not meant for production keys.
 
 ### Signing in place and `--output`
 
@@ -135,10 +134,10 @@ understood, both by libp11/pkcs11-provider and by opensighub itself:
   (must not contain a trailing newline).
 - `pin-value=plaintext`: PIN embedded directly in the URI.
 
-Note that `p11-kit`'s own CLI (used by `opensighub setup testkeys` to generate the
-quickstart test key) only understands `pin-value` or an interactive terminal
-prompt for `--login`, not `pin-source` — this only matters if you use
-`p11-kit` yourself to provision keys.
+Note that `p11-kit`'s own CLI (used by `opensighub setup genkey` to generate
+keys) only understands `pin-value` or an interactive terminal prompt for
+`--login`, not `pin-source` — this only matters if you use `p11-kit` yourself
+to provision keys.
 
 A `--suite` value ending in `/` (e.g. `opensighub debsign --suite trixie/ ...`)
 addresses a flat, `dists`-less repository instead, as produced by a plain

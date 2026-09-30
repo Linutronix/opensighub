@@ -31,7 +31,7 @@ table](user-manual.md#system-dependencies), plus a few build tools test
 signables need. `invoke build-signables` then builds the minimal test
 binaries under `test/signables/` used by the test suite.
 
-Note that `opensighub`'s own quickstart (`opensighub setup softhsm`/`opensighub setup testkeys`,
+Note that `opensighub`'s own quickstart (`opensighub setup softhsm`/`opensighub setup genkey`,
 see the [Quick Start](../README.md#quick-start)) is unrelated to this
 `invoke` tooling: it's a shipped subcommand available to any `pip`/`pipx`
 install, whereas `tasks.py` (and `invoke` itself) is a dev-only dependency

@@ -10,17 +10,20 @@ from opensighub.config import SigningKey
 from opensighub.setup import (
     ExtendedKeyUsage,
     KeyInfoColumn,
+    KeyProperties,
+    Subject,
     generate_csr,
     get_key_info,
-    setup_testenv_keys,
+    setup_genkey,
 )
 from opensighub.util import OpensighubError
 
 
-def test_setup_testenv_keys_requires_softhsm_setup_first(tmp_path, monkeypatch):
+def test_setup_genkey_requires_softhsm_setup_first(tmp_path, monkeypatch, unit_config):
     monkeypatch.setattr("opensighub.setup.user_data_path", lambda name: tmp_path / "data")
+    unit_config._source = tmp_path / "config.yaml"
     with pytest.raises(OpensighubError, match="opensighub setup softhsm"):
-        setup_testenv_keys(tmp_path / "config.yaml")
+        setup_genkey(unit_config, "opensighub-test", KeyProperties())
 
 
 @pytest.mark.integration
@@ -29,10 +32,11 @@ def test_setup_csr(softhsm_shared, integration_config, tmp_path):
         integration_config,
         "acme-2025-swu",
         tmp_path,
-        False,
-        country="DE",
-        organization="opensighub test suite",
-        common_name="opensighub test signer",
+        Subject(
+            country="DE",
+            organization="opensighub test suite",
+            common_name="opensighub test signer",
+        ),
     )
     assert (tmp_path / "acme-2025-swu.csr").exists()
 
@@ -45,7 +49,7 @@ def test_setup_csr_purpose_requests_extended_key_usage(
         integration_config,
         "acme-2025-swu",
         tmp_path,
-        common_name="opensighub test signer",
+        Subject(common_name="opensighub test signer"),
         purpose=[ExtendedKeyUsage.CODE_SIGNING, ExtendedKeyUsage.TIME_STAMPING],
     )
     csr_text = subprocess.check_output(
@@ -64,7 +68,7 @@ def test_setup_csr_without_purpose_omits_extended_key_usage(
         integration_config,
         "acme-2025-swu",
         tmp_path,
-        common_name="opensighub test signer",
+        Subject(common_name="opensighub test signer"),
     )
     csr_text = subprocess.check_output(
         ["openssl", "req", "-in", str(tmp_path / "acme-2025-swu.csr"), "-noout", "-text"]
@@ -78,7 +82,7 @@ def test_setup_csr_unknown_purpose_raises(unit_config, tmp_path):
             unit_config,
             "acme-2025-swu",
             tmp_path,
-            common_name="opensighub test signer",
+            Subject(common_name="opensighub test signer"),
             purpose=["bogus"],
         )
 
@@ -90,7 +94,7 @@ def test_setup_csr_key_without_pkcs11_uri_raises(unit_config, tmp_path):
             unit_config,
             "broken-key",
             tmp_path,
-            common_name="opensighub test signer",
+            Subject(common_name="opensighub test signer"),
         )
 
 
