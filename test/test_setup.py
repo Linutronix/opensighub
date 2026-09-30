@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from opensighub.config import SigningKey
 from opensighub.setup import (
     ExtendedKeyUsage,
     KeyInfoColumn,
@@ -79,6 +80,17 @@ def test_setup_csr_unknown_purpose_raises(unit_config, tmp_path):
             tmp_path,
             common_name="opensighub test signer",
             purpose=["bogus"],
+        )
+
+
+def test_setup_csr_key_without_pkcs11_uri_raises(unit_config, tmp_path):
+    unit_config.signing_keys["broken-key"] = SigningKey(pkcs11_uri=None, cfg_id_init="broken-key")
+    with pytest.raises(OpensighubError, match="No signing key"):
+        generate_csr(
+            unit_config,
+            "broken-key",
+            tmp_path,
+            common_name="opensighub test signer",
         )
 
 
