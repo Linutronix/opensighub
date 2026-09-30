@@ -74,15 +74,13 @@ def build_dir(request, project_root_path):
     return project_root_path / "test" / "build"
 
 
-@pytest.fixture
-def softhsm2_conf(tmp_path, monkeypatch):
+def _write_softhsm2_conf(tmp_path: Path) -> tuple[Path, Path]:
     token_dir = tmp_path / "softhsm2-tokens"
     token_dir.mkdir()
     conf_file = tmp_path / "softhsm2.conf"
     conf_file.write_text(
         f"directories.tokendir = {token_dir}\nobjectstore.backend = file\nlog.level = INFO\n"
     )
-    monkeypatch.setenv("SOFTHSM2_CONF", str(conf_file))
 
     openssl_conf = tmp_path / "openssl.cnf"
     openssl_conf.write_text("""\
@@ -105,13 +103,26 @@ pkcs11-module-block-operations = digest
 # work around softhsm/SoftHSMv2#729, #780, #897
 pkcs11-module-quirks = no-deinit
 """)
-    monkeypatch.setenv("OPENSSL_CONF", str(openssl_conf))
-
-    return conf_file
+    return conf_file, openssl_conf
 
 
 @pytest.fixture
-def softhsm(softhsm2_conf, project_root_path):
+def softhsm2_conf(tmp_path, monkeypatch):
+    conf_file, openssl_conf = _write_softhsm2_conf(tmp_path)
+    monkeypatch.setenv("SOFTHSM2_CONF", str(conf_file))
+    monkeypatch.setenv("OPENSSL_CONF", str(openssl_conf))
+    return conf_file
+
+
+@pytest.fixture(scope="session")
+def softhsm2_conf_shared(tmp_path_factory):
+    conf_file, openssl_conf = _write_softhsm2_conf(tmp_path_factory.mktemp("softhsm2-shared"))
+    os.environ["SOFTHSM2_CONF"] = str(conf_file)
+    os.environ["OPENSSL_CONF"] = str(openssl_conf)
+    return conf_file
+
+
+def _enroll_softhsm(project_root_path: Path) -> None:
     cmd = [
         "softhsm2-util",
         "--init-token",
@@ -125,6 +136,18 @@ def softhsm(softhsm2_conf, project_root_path):
     ]
     subprocess.check_call(cmd)
     subprocess.check_call([project_root_path / "test" / "scripts" / "enroll_test_pki.sh"])
+
+
+@pytest.fixture
+def softhsm(softhsm2_conf, project_root_path):
+    """Fresh token per test. Use only for tests that create/delete/modify token objects."""
+    _enroll_softhsm(project_root_path)
+
+
+@pytest.fixture(scope="session")
+def softhsm_shared(softhsm2_conf_shared, project_root_path):
+    """Token enrolled once per test session. Use for tests that only read/sign."""
+    _enroll_softhsm(project_root_path)
 
 
 @pytest.fixture

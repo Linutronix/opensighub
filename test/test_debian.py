@@ -41,7 +41,7 @@ def files_json():
 
 
 @pytest.mark.integration
-def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
+def test_debsign(tmp_path, softhsm_shared, integration_config_yaml_file):
     sign_main(
         DebSignCmd(
             config_path=integration_config_yaml_file,
@@ -71,7 +71,7 @@ def test_debsign(tmp_path, softhsm, integration_config_yaml_file):
 
 
 @pytest.mark.live
-def test_debian_org_sign_and_build_shim(tmp_path, softhsm, integration_config_yaml_file):
+def test_debian_org_sign_and_build_shim(tmp_path, softhsm_shared, integration_config_yaml_file):
     sign_main(
         DebSignCmd(
             config_path=integration_config_yaml_file,
