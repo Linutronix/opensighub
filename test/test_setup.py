@@ -14,6 +14,7 @@ from opensighub.setup import (
     Subject,
     generate_csr,
     get_key_info,
+    setup_delkey,
     setup_genkey,
 )
 from opensighub.util import OpensighubError
@@ -24,6 +25,42 @@ def test_setup_genkey_requires_softhsm_setup_first(tmp_path, monkeypatch, unit_c
     unit_config._source = tmp_path / "config.yaml"
     with pytest.raises(OpensighubError, match="opensighub setup softhsm"):
         setup_genkey(unit_config, "opensighub-test", KeyProperties())
+
+
+def test_setup_delkey_unknown_key_raises(tmp_path, unit_config):
+    unit_config._source = tmp_path / "config.yaml"
+    with pytest.raises(OpensighubError, match="No signing key"):
+        setup_delkey(unit_config, "does-not-exist")
+
+
+def test_setup_delkey_key_without_pkcs11_uri_raises(tmp_path, unit_config):
+    unit_config._source = tmp_path / "config.yaml"
+    unit_config.signing_keys["broken-key"] = SigningKey(pkcs11_uri=None, cfg_id_init="broken-key")
+    with pytest.raises(OpensighubError, match="No signing key"):
+        setup_delkey(unit_config, "broken-key")
+
+
+@pytest.mark.integration
+def test_setup_delkey_removes_key_from_token_and_config(
+    softhsm, unit_config, tmp_path, sample_pin_file
+):
+    unit_config._source = tmp_path / "config.yaml"
+    setup_genkey(
+        unit_config,
+        "delkey-integration-test",
+        KeyProperties(),
+        token="SoftHSM",
+        pin_source=str(sample_pin_file),
+    )
+    assert "delkey-integration-test" in unit_config.signing_keys
+
+    setup_delkey(unit_config, "delkey-integration-test")
+    assert "delkey-integration-test" not in unit_config.signing_keys
+
+    status = get_key_info(
+        unit_config, [KeyInfoColumn.STATUS], "acme-2025-uefi"
+    )  # sanity: unrelated key untouched, and openssl/token still reachable
+    assert status[0][0] == "available"
 
 
 @pytest.mark.integration

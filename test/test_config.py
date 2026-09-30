@@ -206,6 +206,57 @@ def test_register_key_for_signer_unknown_key_raises(unit_config):
         unit_config.set_key_for_signer(["uefi"], "does-not-exist")
 
 
+def test_remove_signing_key_unknown_key_raises(unit_config):
+    with pytest.raises(OpensighubError):
+        unit_config.remove_signing_key("does-not-exist")
+
+
+def test_remove_signing_key_drops_from_signing_keys(unit_config):
+    unit_config.remove_signing_key("acme-2025-ta-root")
+    assert "acme-2025-ta-root" not in unit_config.signing_keys
+
+
+def test_remove_signing_key_clears_whole_section_swu(unit_config):
+    unit_config.remove_signing_key("acme-2025-swu")
+    assert unit_config.swu is None
+
+
+def test_remove_signing_key_clears_whole_section_uefi(unit_config):
+    unit_config.remove_signing_key("acme-2025-uefi")
+    assert unit_config.uefi is None
+
+
+def test_remove_signing_key_clears_uefi_variable_without_dropping_section():
+    key = SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=main", cfg_id_init="main-key")
+    var_key = SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=var", cfg_id_init="var-key")
+    config = Config(
+        archives={},
+        archive_keyring=None,
+        log_level=10,
+        signing_keys={"main-key": key, "var-key": var_key},
+        trusted_certificates={},
+        uefi=UefiSigningCfg(
+            key=key,
+            variables={"myvar": UefiVariableCfg(key=var_key)},
+        ),
+        swu=None,
+        kernel_modules=None,
+        hab4=None,
+        optee_ta=None,
+        rpi=None,
+    )
+    config.remove_signing_key("var-key")
+    assert config.uefi is not None
+    assert "myvar" not in config.uefi.variables
+
+
+def test_remove_signing_key_clears_only_matching_hab4_role(unit_config):
+    unit_config.remove_signing_key("acme-2025-hab4-img")
+    assert unit_config.hab4 is not None
+    assert unit_config.hab4.img_key is None
+    assert unit_config.hab4.csf_key is not None
+
+
 def test_config_to_dict_omits_none_sections():
     config = Config(
         archives={},

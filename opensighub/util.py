@@ -318,6 +318,29 @@ def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
     log_subprocess_output(result)
 
 
+def pkcs11_delete_object(uri: Pkcs11Uri) -> None:
+    result = subprocess.run(
+        ["p11-kit", "delete-object", "--login", str(uri)],
+        input=uri.pin_source_content(),
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    if result.returncode != 0:
+        raise OpensighubError(f"Failed to delete object '{uri}': {result.stderr.decode().strip()}")
+
+
+def pkcs11_delete_key(key_uri: Pkcs11Uri):
+    found = False
+    for obj_type in ("private", "public", "cert"):
+        obj_uri = replace(key_uri, type=obj_type)
+        if pkcs11_object_exists(obj_uri):
+            found = True
+            pkcs11_delete_object(obj_uri)
+    if not found:
+        raise OpensighubError(f"No objects for key '{key_uri}' found on token")
+
+
 def x509_generate_self_signed_cert(
     token: str, pkcs11_key_id: str, pin_source: str | None, cert_pem: Path
 ):

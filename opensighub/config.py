@@ -403,3 +403,30 @@ class Config:
                 self.kernel_modules = LinuxModuleSigningCfg(key=key)
             else:
                 self.kernel_modules.key = key
+
+    def remove_signing_key(self, key_id: str) -> None:
+        if key_id not in self.signing_keys:
+            raise OpensighubError(f"Unknown signing key '{key_id}'")
+        if self.uefi is not None:
+            if self.uefi.key.cfg_id == key_id:
+                self.uefi = None
+            else:
+                self.uefi.variables = {
+                    name: var
+                    for name, var in self.uefi.variables.items()
+                    if var.key.cfg_id != key_id
+                }
+        if self.swu is not None and self.swu.key.cfg_id == key_id:
+            self.swu = None
+        if self.kernel_modules is not None and self.kernel_modules.key.cfg_id == key_id:
+            self.kernel_modules = None
+        if self.optee_ta is not None and self.optee_ta.key.cfg_id == key_id:
+            self.optee_ta = None
+        if self.rpi is not None and self.rpi.key.cfg_id == key_id:
+            self.rpi = None
+        if self.hab4 is not None:
+            if self.hab4.img_key is not None and self.hab4.img_key.cfg_id == key_id:
+                self.hab4.img_key = None
+            if self.hab4.csf_key is not None and self.hab4.csf_key.cfg_id == key_id:
+                self.hab4.csf_key = None
+        del self.signing_keys[key_id]
