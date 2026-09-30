@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Iterator, MutableMapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, fields, replace
 from enum import StrEnum
@@ -212,6 +212,13 @@ class KeyProperties:
     curve: str | None = None
 
 
+class KeyStatus(StrEnum):
+    INVALID = "invalid"
+    OFFLINE = "offline"
+    AVAILABLE = "available"
+    LOGIN_REQUIRED = "loginrequired"
+
+
 def _subprocess_error_detail(e: subprocess.CalledProcessError) -> str:
     return e.stderr.decode().strip() if e.stderr else str(e)
 
@@ -342,6 +349,61 @@ def x509_generate_self_signed_cert(
             f"Failed to generate self-signed certificate for '{pkcs11_key_id}' on token "
             f"'{token}': {_subprocess_error_detail(e)}"
         ) from e
+
+
+def x509_generate_csr(
+    key_uri: str, subject: Subject, csr_path: Path, purpose: Sequence[str] | None = None
+):
+    try:
+        subprocess.check_call(
+            [
+                "openssl",
+                "req",
+                "-provider",
+                "pkcs11",
+                "-new",
+                "-batch",
+                "-subj",
+                csr_openssl_subject(subject),
+                *(["-addext", f"extendedKeyUsage={','.join(purpose)}"] if purpose else []),
+                "-key",
+                key_uri,
+                "-out",
+                str(csr_path),
+            ],
+        )
+    except subprocess.CalledProcessError as e:
+        raise OpensighubError(
+            f"Failed to generate CSR for '{key_uri}': {_subprocess_error_detail(e)}"
+        ) from e
+
+
+def key_status(pkcs11_uri: str | None) -> KeyStatus:
+    if pkcs11_uri is None:
+        return KeyStatus.INVALID
+    try:
+        Pkcs11Uri.try_parse(pkcs11_uri)
+        provider = "pkcs11"
+    except ValueError:
+        return KeyStatus.INVALID
+    try:
+        result = subprocess.run(
+            ["openssl", "storeutl", "-provider", provider, pkcs11_uri],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            start_new_session=True,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return KeyStatus.OFFLINE
+    match = re.search(r"Total found:\s+(\d+)", result.stdout)
+    if match and int(match.group(1)) > 0:
+        return KeyStatus.AVAILABLE
+    if "pass phrase" in result.stderr or "PIN" in result.stderr:
+        return KeyStatus.LOGIN_REQUIRED
+    return KeyStatus.OFFLINE
 
 
 def csr_openssl_subject(subject: Subject) -> str:
