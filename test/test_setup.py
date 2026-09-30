@@ -23,7 +23,7 @@ def test_setup_testenv_keys_requires_softhsm_setup_first(tmp_path, monkeypatch):
 
 
 @pytest.mark.integration
-def test_setup_csr(softhsm, integration_config, tmp_path):
+def test_setup_csr(softhsm_shared, integration_config, tmp_path):
     generate_csr(
         integration_config,
         "acme-2025-swu",
@@ -37,7 +37,9 @@ def test_setup_csr(softhsm, integration_config, tmp_path):
 
 
 @pytest.mark.integration
-def test_setup_csr_purpose_requests_extended_key_usage(softhsm, integration_config, tmp_path):
+def test_setup_csr_purpose_requests_extended_key_usage(
+    softhsm_shared, integration_config, tmp_path
+):
     generate_csr(
         integration_config,
         "acme-2025-swu",
@@ -54,7 +56,9 @@ def test_setup_csr_purpose_requests_extended_key_usage(softhsm, integration_conf
 
 
 @pytest.mark.integration
-def test_setup_csr_without_purpose_omits_extended_key_usage(softhsm, integration_config, tmp_path):
+def test_setup_csr_without_purpose_omits_extended_key_usage(
+    softhsm_shared, integration_config, tmp_path
+):
     generate_csr(
         integration_config,
         "acme-2025-swu",
@@ -95,14 +99,16 @@ def test_setup_get_key_info_all_name_uri(unit_config):
 
 
 @pytest.mark.integration
-def test_setup_get_key_info_status(softhsm, integration_config):
+def test_setup_get_key_info_status(softhsm_shared, integration_config):
     key_info = get_key_info(integration_config, [KeyInfoColumn.STATUS], "acme-2025-uefi")
     assert len(key_info) == 1
     assert key_info[0][0] == "available"
 
 
 @pytest.mark.integration
-def test_setup_get_key_info_status_multiple_keys_preserves_order(softhsm, integration_config):
+def test_setup_get_key_info_status_multiple_keys_preserves_order(
+    softhsm_shared, integration_config
+):
     key_info = get_key_info(integration_config, [KeyInfoColumn.KEYID, KeyInfoColumn.STATUS])
     assert [row[0] for row in key_info] == list(integration_config.signing_keys.keys())
     for row in key_info:
