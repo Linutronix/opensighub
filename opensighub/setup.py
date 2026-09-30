@@ -4,7 +4,6 @@
 
 import logging
 import os
-import re
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
@@ -25,11 +24,12 @@ from opensighub.util import (
     Pkcs11Uri,
     Pkcs11UriQattr,
     Subject,
-    csr_openssl_subject,
+    key_status,
     pkcs11_generate_keypair,
     pkcs11_import_object,
     pkcs11_object_exists,
     raise_if_tool_missing,
+    x509_generate_csr,
     x509_generate_self_signed_cert,
 )
 
@@ -225,51 +225,7 @@ def generate_csr(
     csr_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Generating CSR for key '{key_id}' at {csr_path}")
-    subprocess.check_call(
-        [
-            "openssl",
-            "req",
-            "-provider",
-            "pkcs11",
-            "-new",
-            "-batch",
-            "-subj",
-            csr_openssl_subject(subject),
-            *(["-addext", f"extendedKeyUsage={','.join(purpose)}"] if purpose else []),
-            "-key",
-            signing_key.pkcs11_uri,
-            "-out",
-            str(csr_path),
-        ]
-    )
-
-
-def _key_status(key: SigningKey) -> str:
-    if key.pkcs11_uri is None:
-        return "invalid"
-    try:
-        Pkcs11Uri.try_parse(key.pkcs11_uri)
-        provider = "pkcs11"
-    except ValueError:
-        return "invalid"
-    try:
-        result = subprocess.run(
-            ["openssl", "storeutl", "-provider", provider, key.pkcs11_uri],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-            start_new_session=True,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return "offline"
-    match = re.search(r"Total found:\s+(\d+)", result.stdout)
-    if match and int(match.group(1)) > 0:
-        return "available"
-    if "pass phrase" in result.stderr or "PIN" in result.stderr:
-        return "loginrequired"
-    return "offline"
+    x509_generate_csr(signing_key.pkcs11_uri, subject, csr_path, purpose)
 
 
 def _key_uri(key: SigningKey) -> str:
@@ -279,7 +235,7 @@ def _key_uri(key: SigningKey) -> str:
 KEY_INFO_COLUMNS: dict[str, Callable[[str, SigningKey], str]] = {
     KeyInfoColumn.KEYID: lambda key_id, _: key_id,
     KeyInfoColumn.URI: lambda _, key: _key_uri(key),
-    KeyInfoColumn.STATUS: lambda _, key: _key_status(key),
+    KeyInfoColumn.STATUS: lambda _, key: key_status(key.pkcs11_uri),
 }
 
 
