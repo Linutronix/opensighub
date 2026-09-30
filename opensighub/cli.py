@@ -105,7 +105,7 @@ class BaseCmd:
             cfg_dict = yaml.safe_load(self.config_path.read_text()) or {}
         except OSError as e:
             raise OpensighubError(f"Could not read config file: {e}") from e
-        return Config.from_dict(cfg_dict)
+        return Config.from_dict(cfg_dict, source=self.config_path)
 
 
 @dataclass
