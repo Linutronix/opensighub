@@ -250,6 +250,13 @@ class DelKeyCmd(BaseCmd):
 
 
 @dataclass
+class ImportCertCmd(BaseCmd):
+    cert_path: Path
+    key_id: str | None
+    force_overwrite: bool
+
+
+@dataclass
 class ListKeysCmd(BaseCmd):
     key_id: str | None
     columns: list[setup.KeyInfoColumn]
@@ -263,7 +270,7 @@ class CsrCmd(BaseCmd):
     purpose: list[setup.ExtendedKeyUsage] | None
 
 
-SetupCmd = SoftHsmCmd | GenKeyCmd | DelKeyCmd | ListKeysCmd | CsrCmd
+SetupCmd = SoftHsmCmd | GenKeyCmd | DelKeyCmd | ImportCertCmd | ListKeysCmd | CsrCmd
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
@@ -553,6 +560,22 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         "key_id",
         help="ID of the key in config.yaml's signing-keys section to delete.",
     )
+    importcert_parser = setup_sub_parsers.add_parser(
+        "importcert",
+        help="Import a CA-issued certificate for a signing key.",
+        description="Imports a certificate onto the key's token and registers it in configuration.",
+    )
+    importcert_parser.add_argument(
+        "cert_path",
+        type=Path,
+        help="Path to the PEM encoded certificate to import.",
+    )
+    importcert_key_id_arg = importcert_parser.add_argument(
+        "--key-id",
+        default=None,
+        help="ID of the associated signing key in configuration. If omitted, a key is matched automatically "
+        "by comparing public key hashes.",
+    )
     listkeys_parser = setup_sub_parsers.add_parser(
         "listkeys",
         help="List information about configured signing keys.",
@@ -612,6 +635,7 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         binaries_arg.complete = shtab.FILE  # type: ignore[attr-defined]
         key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
         delkey_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
+        importcert_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
 
     return parser
 
@@ -647,6 +671,14 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             config_path=Path(args.config),
             output=Path(args.output),
             key_id=args.key_id,
+        )
+    if args.command == "setup" and args.setup_command == "importcert":
+        return ImportCertCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            cert_path=args.cert_path,
+            force_overwrite=args.yes,
         )
     if args.command == "setup" and args.setup_command == "listkeys":
         return ListKeysCmd(
@@ -765,6 +797,13 @@ def run_setup(run_config: SetupCmd) -> None:
         )
     elif isinstance(run_config, DelKeyCmd):
         setup.setup_delkey(run_config.config, run_config.key_id)
+    elif isinstance(run_config, ImportCertCmd):
+        setup.setup_importcert(
+            run_config.config,
+            run_config.cert_path,
+            run_config.key_id,
+            run_config.force_overwrite,
+        )
     elif isinstance(run_config, ListKeysCmd):
         key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
         print("\n".join(" ".join(row) for row in key_info))
