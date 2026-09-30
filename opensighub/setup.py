@@ -26,10 +26,13 @@ from opensighub.util import (
     Subject,
     key_status,
     pkcs11_delete_key,
+    pkcs11_delete_object,
     pkcs11_generate_keypair,
     pkcs11_import_object,
     pkcs11_object_exists,
+    pkcs11_pubkey_hash,
     raise_if_tool_missing,
+    x509_cert_pubkey_hash,
     x509_generate_csr,
     x509_generate_self_signed_cert,
 )
@@ -200,10 +203,61 @@ def setup_delkey(config: Config, key_id: str) -> None:
     logger.info(f"Key '{key_id}' deleted from token and removed from {config._source}.")
 
 
+def setup_importcert(
+    config: Config,
+    cert_path: Path,
+    key_id: str | None = None,
+    force_overwrite: bool = False,
+) -> None:
+    raise_if_tool_missing("p11-kit", "openssl")
+
+    if not cert_path.exists():
+        raise OpensighubError(f"Certificate file '{cert_path}' not found")
+    cert_hash = x509_cert_pubkey_hash(cert_path)
+
+    if key_id is not None:
+        signing_key = config.signing_keys.get(key_id)
+        if signing_key is None or signing_key.pkcs11_uri is None:
+            raise OpensighubError(f"Signing key '{key_id}' not configured")
+        key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
+        if pkcs11_pubkey_hash(key_uri) != cert_hash:
+            raise OpensighubError(
+                f"Certificate '{cert_path}' does not match the public key of '{key_id}'"
+            )
+    else:
+        key_info = get_key_info(config, [KeyInfoColumn.KEYID, KeyInfoColumn.PUBKEY_HASH])
+        matches = [row[0] for row in key_info if row[1] == cert_hash]
+        if not matches:
+            raise OpensighubError("Certificate has no matching key")
+        if len(matches) > 1:
+            raise OpensighubError(
+                f"Multiple configured keys match this certificate: {', '.join(matches)}. "
+                "Use --key-id to disambiguate."
+            )
+        key_id = matches[0]
+        signing_key = config.signing_keys[key_id]
+        if signing_key.pkcs11_uri is None:
+            raise OpensighubError(f"No signing key '{key_id}'")
+        key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
+
+    token_uri = Pkcs11Uri(token=key_uri.token, qattr=key_uri.qattr)
+    cert_uri = replace(key_uri, type="cert")
+    if pkcs11_object_exists(cert_uri):
+        confirm_overwrite(
+            f"certificate for key '{key_id}' on token '{key_uri.token}'", force_overwrite
+        )
+        pkcs11_delete_object(cert_uri)
+        logger.debug("Previous certificate deleted")
+
+    pkcs11_import_object(token_uri, cert_path, key_id)
+    logger.info(f"Certificate imported for key '{key_id}'.")
+
+
 class KeyInfoColumn(StrEnum):
     KEYID = "keyid"
     URI = "uri"
     STATUS = "status"
+    PUBKEY_HASH = "pubkey_hash"
 
 
 class ExtendedKeyUsage(StrEnum):
@@ -248,17 +302,35 @@ def _key_uri(key: SigningKey) -> str:
     return key.pkcs11_uri or ""
 
 
+def _key_pubkey_hash(key: SigningKey) -> str:
+    if key.pkcs11_uri is None:
+        return ""
+    try:
+        uri = Pkcs11Uri.try_parse(key.pkcs11_uri)
+    except ValueError:
+        return ""
+    try:
+        return pkcs11_pubkey_hash(uri)
+    except OpensighubError:
+        return ""
+
+
+_PARALLELIZABLE_COLUMNS: frozenset[KeyInfoColumn] = frozenset(
+    {KeyInfoColumn.STATUS, KeyInfoColumn.PUBKEY_HASH}
+)
+
 KEY_INFO_COLUMNS: dict[str, Callable[[str, SigningKey], str]] = {
     KeyInfoColumn.KEYID: lambda key_id, _: key_id,
     KeyInfoColumn.URI: lambda _, key: _key_uri(key),
     KeyInfoColumn.STATUS: lambda _, key: key_status(key.pkcs11_uri),
+    KeyInfoColumn.PUBKEY_HASH: lambda _, key: _key_pubkey_hash(key),
 }
 
 
 def get_key_info(
     config: Config, columns: Sequence[KeyInfoColumn], key_id: str | None = None
 ) -> list[list[str]]:
-    if KeyInfoColumn.STATUS in columns:
+    if _PARALLELIZABLE_COLUMNS & set(columns):
         raise_if_tool_missing("openssl")
 
     key_ids = [key_id] if key_id is not None else list(config.signing_keys.keys())
@@ -269,7 +341,7 @@ def get_key_info(
     def row(k: str) -> list[str]:
         return [KEY_INFO_COLUMNS[column](k, config.signing_keys[k]) for column in columns]
 
-    if KeyInfoColumn.STATUS in columns and len(key_ids) > 1:
+    if _PARALLELIZABLE_COLUMNS & set(columns) and len(key_ids) > 1:
         with ThreadPoolExecutor(max_workers=len(key_ids)) as pool:
             return list(pool.map(row, key_ids))
     return [row(k) for k in key_ids]
