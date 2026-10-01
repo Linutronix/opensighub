@@ -4,8 +4,8 @@
 
 import logging
 import os
-import re
 import subprocess
+import tempfile
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -17,7 +17,25 @@ from platformdirs import user_data_path
 
 from opensighub.config import Config, SigningKey
 from opensighub.signers import confirm_overwrite
-from opensighub.util import OpensighubError, Pkcs11Uri, Pkcs11UriQattr, raise_if_tool_missing
+from opensighub.util import (
+    KeyProperties,
+    KeyType,
+    OpensighubError,
+    Pkcs11Uri,
+    Pkcs11UriQattr,
+    Subject,
+    key_status,
+    pkcs11_delete_key,
+    pkcs11_delete_object,
+    pkcs11_generate_keypair,
+    pkcs11_import_object,
+    pkcs11_object_exists,
+    pkcs11_pubkey_hash,
+    raise_if_tool_missing,
+    x509_cert_pubkey_hash,
+    x509_generate_csr,
+    x509_generate_self_signed_cert,
+)
 
 logger = logging.getLogger("opensighub")
 
@@ -65,8 +83,8 @@ def setup_local_token(config_path: Path) -> None:
     else:
         logger.warning(f"{pin_file} already exists, leaving it untouched")
 
-    env = os.environ | {"SOFTHSM2_CONF": str(softhsm2_conf)}
-    slots = subprocess.check_output(["softhsm2-util", "--show-slots"], env=env).decode()
+    enable_local_softhsm2(config_path)
+    slots = subprocess.check_output(["softhsm2-util", "--show-slots"]).decode()
     if not SOFTHSM_LOCAL_TOKEN_LABEL in slots:
         logger.info(f"Setting up local SoftHSM token in {token_dir}")
         subprocess.check_call(
@@ -81,7 +99,6 @@ def setup_local_token(config_path: Path) -> None:
                 "--so-pin",
                 SOFTHSM_LOCAL_SO_PIN,
             ],
-            env=env,
         )
     else:
         logger.warning(f"Token '{SOFTHSM_LOCAL_TOKEN_LABEL}' already exists, skipping init")
@@ -112,99 +129,135 @@ def setup_local_token(config_path: Path) -> None:
     )
 
 
-def _login_uri(token_uri: Pkcs11Uri, pin_file: Path) -> str:
-    # p11-kit's CLI only reads the PIN from a URI's pin-value attribute or the
-    # terminal, never from stdin or pin-source; see p11-kit(8) under --login.
-    return str(replace(token_uri, qattr=Pkcs11UriQattr(pin_value=pin_file.read_text())))
+class GenKeyUseFor(StrEnum):
+    UEFI = "uefi"
+    SWU = "swu"
+    KERNEL_MODULES = "kernel_modules"
+    HAB4_IMG_KEY = "hab4:img_key"
+    HAB4_CSF_KEY = "hab4:csf_key"
+    OPTEE_TA = "optee_ta"
+    RPI = "rpi"
 
 
-def setup_testenv_keys(config_path: Path) -> None:
+def setup_genkey(
+    config: Config,
+    key_id: str,
+    key_properties: KeyProperties,
+    token: str = SOFTHSM_LOCAL_TOKEN_LABEL,
+    pin_source: str | None = None,
+    use_for: Sequence[GenKeyUseFor] = (),
+) -> None:
     raise_if_tool_missing("p11-kit", "openssl")
-    data_dir, softhsm2_conf, _, pin_file = _opensighub_paths(config_path)
-    if not pin_file.exists() or not config_path.exists():
-        raise OpensighubError("Run 'opensighub setup softhsm' first.")
-    env = os.environ | {"SOFTHSM2_CONF": str(softhsm2_conf)}
-    token_uri = Pkcs11Uri(token=SOFTHSM_LOCAL_TOKEN_LABEL)
+    if config._source is None:
+        raise OpensighubError("Config has no source path to save to")
+    if key_properties.key_type == KeyType.RSA and not key_properties.bits:
+        raise OpensighubError("Key length missing for RSA key")
+    if key_properties.key_type == KeyType.ECDSA and not key_properties.curve:
+        raise OpensighubError("Curve missing for EC key")
+    is_local = token == SOFTHSM_LOCAL_TOKEN_LABEL
+    _data_dir, _softhsm2_conf, _softhsm2_token, local_pin_file = _opensighub_paths(config._source)
+    if is_local and pin_source is None:
+        if not local_pin_file.exists():
+            raise OpensighubError("Run 'opensighub setup softhsm' first.")
+        pin_source = str(local_pin_file)
+    token_uri = Pkcs11Uri(
+        token=token, qattr=Pkcs11UriQattr(pin_source=pin_source) if pin_source else None
+    )
+    key_uri = replace(token_uri, object=key_id)
 
-    objects = subprocess.check_output(["p11-kit", "list-objects", str(token_uri)], env=env).decode()
-    if not SOFTHSM_TEST_UEFI_KEY_LABEL in objects:
-        logger.info(f"Generating test key on {token_uri}")
-        subprocess.check_call(
-            [
-                "p11-kit",
-                "generate-keypair",
-                "--label",
-                SOFTHSM_TEST_UEFI_KEY_LABEL,
-                "--type",
-                "rsa",
-                "--bits",
-                "4096",
-                "--login",
-                _login_uri(token_uri, pin_file),
-            ],
-            env=env,
-        )
-        cert_pem = data_dir / f"{SOFTHSM_TEST_UEFI_KEY_LABEL}.pem"
-        logger.info(f"Generating certificate for {SOFTHSM_TEST_UEFI_KEY_LABEL}")
-        subprocess.check_call(
-            [
-                "openssl",
-                "req",
-                "-engine",
-                "pkcs11",
-                "-keyform",
-                "engine",
-                "-new",
-                "-batch",
-                "-x509",
-                "-days",
-                "3650",
-                "-subj",
-                "/CN=opensighub test key/",
-                "-key",
-                str(Pkcs11Uri(token=SOFTHSM_LOCAL_TOKEN_LABEL, object=SOFTHSM_TEST_UEFI_KEY_LABEL)),
-                "-passin",
-                f"file:{pin_file}",
-                "-out",
-                str(cert_pem),
-            ],
-            env=env,
-        )
-        logger.info(f"Import certificate to {token_uri}")
-        subprocess.check_call(
-            [
-                "p11-kit",
-                "import-object",
-                f"--file={cert_pem}",
-                "--label",
-                SOFTHSM_TEST_UEFI_KEY_LABEL,
-                "--login",
-                _login_uri(token_uri, pin_file),
-            ],
-            env=env,
-        )
-    else:
-        logger.warning(f"Key '{SOFTHSM_TEST_UEFI_KEY_LABEL}' already exists, skipping generation")
+    try:
+        if pkcs11_object_exists(key_uri):
+            logger.warning(f"Key '{key_id}' already exists, skipping generation")
+        else:
+            logger.info(f"Generating key on {token_uri}")
+            pkcs11_generate_keypair(token_uri, key_id, key_properties)
+            config.add_signing_key(key_id, str(key_uri))
 
-    config = yaml.safe_load(config_path.read_text()) or {}
-    config.setdefault("signing-keys", {})[SOFTHSM_TEST_UEFI_KEY_LABEL] = {
-        "pkcs11_uri": str(
-            Pkcs11Uri(
-                token=SOFTHSM_LOCAL_TOKEN_LABEL,
-                object=SOFTHSM_TEST_UEFI_KEY_LABEL,
-                qattr=Pkcs11UriQattr(pin_source=str(pin_file)),
+            with tempfile.TemporaryDirectory() as tmp_cert_dir:
+                cert_pem = Path(tmp_cert_dir) / f"{key_id}.pem"
+                logger.info(f"Generating certificate for {key_id}")
+                x509_generate_self_signed_cert(token, key_id, pin_source, cert_pem)
+                logger.info(f"Import certificate to {token_uri}")
+                pkcs11_import_object(token_uri, cert_pem, key_id)
+
+        config.add_signing_key(key_id, str(key_uri))
+        for use in use_for:
+            config.set_key_for_signer(use.split(":"), key_id)
+    finally:
+        config.save()
+    logger.info(f"Key '{key_id}' generated and entered in {config._source}.")
+
+
+def setup_delkey(config: Config, key_id: str) -> None:
+    raise_if_tool_missing("p11-kit")
+    if config._source is None:
+        raise OpensighubError("Config has no source path to save to")
+    signing_key = config.signing_keys.get(key_id)
+    if signing_key is None or signing_key.pkcs11_uri is None:
+        raise OpensighubError(f"No signing key '{key_id}'")
+    key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
+    pkcs11_delete_key(key_uri)
+
+    config.remove_signing_key(key_id)
+    config.save()
+    logger.info(f"Key '{key_id}' deleted from token and removed from {config._source}.")
+
+
+def setup_importcert(
+    config: Config,
+    cert_path: Path,
+    key_id: str | None = None,
+    force_overwrite: bool = False,
+) -> None:
+    raise_if_tool_missing("p11-kit", "openssl")
+
+    if not cert_path.exists():
+        raise OpensighubError(f"Certificate file '{cert_path}' not found")
+    cert_hash = x509_cert_pubkey_hash(cert_path)
+
+    if key_id is not None:
+        signing_key = config.signing_keys.get(key_id)
+        if signing_key is None or signing_key.pkcs11_uri is None:
+            raise OpensighubError(f"Signing key '{key_id}' not configured")
+        key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
+        if pkcs11_pubkey_hash(key_uri) != cert_hash:
+            raise OpensighubError(
+                f"Certificate '{cert_path}' does not match the public key of '{key_id}'"
             )
+    else:
+        key_info = get_key_info(config, [KeyInfoColumn.KEYID, KeyInfoColumn.PUBKEY_HASH])
+        matches = [row[0] for row in key_info if row[1] == cert_hash]
+        if not matches:
+            raise OpensighubError("Certificate has no matching key")
+        if len(matches) > 1:
+            raise OpensighubError(
+                f"Multiple configured keys match this certificate: {', '.join(matches)}. "
+                "Use --key-id to disambiguate."
+            )
+        key_id = matches[0]
+        signing_key = config.signing_keys[key_id]
+        if signing_key.pkcs11_uri is None:
+            raise OpensighubError(f"No signing key '{key_id}'")
+        key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
+
+    token_uri = Pkcs11Uri(token=key_uri.token, qattr=key_uri.qattr)
+    cert_uri = replace(key_uri, type="cert")
+    if pkcs11_object_exists(cert_uri):
+        confirm_overwrite(
+            f"certificate for key '{key_id}' on token '{key_uri.token}'", force_overwrite
         )
-    }
-    config.setdefault("uefi", {"key": SOFTHSM_TEST_UEFI_KEY_LABEL})
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
-    logger.info(f"Done. Test key entered in {config_path}.")
+        pkcs11_delete_object(cert_uri)
+        logger.debug("Previous certificate deleted")
+
+    pkcs11_import_object(token_uri, cert_path, key_id)
+    logger.info(f"Certificate imported for key '{key_id}'.")
 
 
 class KeyInfoColumn(StrEnum):
     KEYID = "keyid"
     URI = "uri"
     STATUS = "status"
+    PUBKEY_HASH = "pubkey_hash"
 
 
 class ExtendedKeyUsage(StrEnum):
@@ -218,44 +271,17 @@ class ExtendedKeyUsage(StrEnum):
     OCSP_SIGNING = "OCSPSigning"
 
 
-def _csr_openssl_subject(
-    country: str | None,
-    state_or_province: str | None,
-    locality: str | None,
-    organization: str | None,
-    organizational_unit: str | None,
-    common_name: str | None,
-    email_address: str | None,
-) -> str:
-    fields = [
-        ("C", country),
-        ("ST", state_or_province),
-        ("L", locality),
-        ("O", organization),
-        ("OU", organizational_unit),
-        ("CN", common_name),
-        ("emailAddress", email_address),
-    ]
-    escaped = [(name, value.replace("/", "\\/")) for name, value in fields if value]
-    return "/" + "/".join(f"{name}={value}" for name, value in escaped)
-
-
 def generate_csr(
     config: Config,
     key_id: str,
     output_dir: Path,
+    subject: Subject,
     force_overwrite: bool = False,
-    country: str | None = None,
-    state_or_province: str | None = None,
-    locality: str | None = None,
-    organization: str | None = None,
-    organizational_unit: str | None = None,
-    common_name: str | None = None,
-    email_address: str | None = None,
     purpose: Sequence[ExtendedKeyUsage] | None = None,
 ) -> None:
     raise_if_tool_missing("openssl")
-    if key_id not in config.signing_keys:
+    signing_key = config.signing_keys.get(key_id)
+    if signing_key is None or signing_key.pkcs11_uri is None:
         raise OpensighubError(f"No signing key '{key_id}'")
     if purpose and (unknown := [p for p in purpose if p not in list(ExtendedKeyUsage)]):
         raise OpensighubError(
@@ -269,70 +295,42 @@ def generate_csr(
     csr_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Generating CSR for key '{key_id}' at {csr_path}")
-    subprocess.check_call(
-        [
-            "openssl",
-            "req",
-            "-provider",
-            "pkcs11",
-            "-new",
-            "-batch",
-            "-subj",
-            _csr_openssl_subject(
-                country,
-                state_or_province,
-                locality,
-                organization,
-                organizational_unit,
-                common_name,
-                email_address,
-            ),
-            *(["-addext", f"extendedKeyUsage={','.join(purpose)}"] if purpose else []),
-            "-key",
-            config.signing_keys[key_id].pkcs11_uri,
-            "-out",
-            str(csr_path),
-        ]
-    )
+    x509_generate_csr(signing_key.pkcs11_uri, subject, csr_path, purpose)
 
 
-def _key_status(key: SigningKey) -> str:
+def _key_uri(key: SigningKey) -> str:
+    return key.pkcs11_uri or ""
+
+
+def _key_pubkey_hash(key: SigningKey) -> str:
+    if key.pkcs11_uri is None:
+        return ""
     try:
-        Pkcs11Uri.try_parse(key.pkcs11_uri)
-        provider = "pkcs11"
+        uri = Pkcs11Uri.try_parse(key.pkcs11_uri)
     except ValueError:
-        return "invalid"
+        return ""
     try:
-        result = subprocess.run(
-            ["openssl", "storeutl", "-provider", provider, key.pkcs11_uri],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-            start_new_session=True,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return "offline"
-    match = re.search(r"Total found:\s+(\d+)", result.stdout)
-    if match and int(match.group(1)) > 0:
-        return "available"
-    if "pass phrase" in result.stderr or "PIN" in result.stderr:
-        return "loginrequired"
-    return "offline"
+        return pkcs11_pubkey_hash(uri)
+    except OpensighubError:
+        return ""
 
+
+_PARALLELIZABLE_COLUMNS: frozenset[KeyInfoColumn] = frozenset(
+    {KeyInfoColumn.STATUS, KeyInfoColumn.PUBKEY_HASH}
+)
 
 KEY_INFO_COLUMNS: dict[str, Callable[[str, SigningKey], str]] = {
     KeyInfoColumn.KEYID: lambda key_id, _: key_id,
-    KeyInfoColumn.URI: lambda _, key: key.pkcs11_uri,
-    KeyInfoColumn.STATUS: lambda _, key: _key_status(key),
+    KeyInfoColumn.URI: lambda _, key: _key_uri(key),
+    KeyInfoColumn.STATUS: lambda _, key: key_status(key.pkcs11_uri),
+    KeyInfoColumn.PUBKEY_HASH: lambda _, key: _key_pubkey_hash(key),
 }
 
 
 def get_key_info(
     config: Config, columns: Sequence[KeyInfoColumn], key_id: str | None = None
 ) -> list[list[str]]:
-    if KeyInfoColumn.STATUS in columns:
+    if _PARALLELIZABLE_COLUMNS & set(columns):
         raise_if_tool_missing("openssl")
 
     key_ids = [key_id] if key_id is not None else list(config.signing_keys.keys())
@@ -343,7 +341,7 @@ def get_key_info(
     def row(k: str) -> list[str]:
         return [KEY_INFO_COLUMNS[column](k, config.signing_keys[k]) for column in columns]
 
-    if KeyInfoColumn.STATUS in columns and len(key_ids) > 1:
+    if _PARALLELIZABLE_COLUMNS & set(columns) and len(key_ids) > 1:
         with ThreadPoolExecutor(max_workers=len(key_ids)) as pool:
             return list(pool.map(row, key_ids))
     return [row(k) for k in key_ids]

@@ -40,7 +40,7 @@ Set up configuration for user-local SoftHSM token and keys test key in it
 
 ```
 opensighub setup softhsm
-opensighub setup testkeys
+opensighub setup genkey
 ```
 
 Sign systemd-boot from the Debian archive with your own key
@@ -56,4 +56,5 @@ opensighub --output ./signed debsign \
 ## Documentation
 
 - [User Manual](https://github.com/Linutronix/opensighub/blob/main/docs/user-manual.md)
+- [Key Management Workflow](https://github.com/Linutronix/opensighub/blob/main/docs/key-management.md)
 - [Development](https://github.com/Linutronix/opensighub/blob/main/docs/development.md)

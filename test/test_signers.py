@@ -3,14 +3,18 @@
 # SPDX-License-Identifier: 0BSD
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from opensighub.cli import UefiVarSignCmd, sign_main
+from opensighub.config import Hab4SigningCfg, RawSigningCfg
 from opensighub.signers import (
     Hab4Sign,
+    Hab4SignJob,
     LinuxModuleSign,
     OpteeTaSign,
+    RawSignJob,
     RpiEepromSign,
     RpiSign,
     SwuSign,
@@ -18,11 +22,11 @@ from opensighub.signers import (
     UefiVariableSign,
     UefiVariableSignJob,
 )
-from opensighub.util import CertCache, Pkcs11Uri
+from opensighub.util import CertCache, OpensighubError, Pkcs11Uri
 
 
 @pytest.mark.integration
-def test_uefi_sign(softhsm, integration_config, sample_efi_file, tmp_path):
+def test_uefi_sign(softhsm_shared, integration_config, sample_efi_file, tmp_path):
     signature_dest = tmp_path / "signature.pk7"
     with CertCache() as cc:
         uefi_signer = UefiSign(cc, integration_config.uefi)
@@ -41,7 +45,7 @@ def test_uefi_sign(softhsm, integration_config, sample_efi_file, tmp_path):
 
 
 @pytest.mark.integration
-def test_uefi_variable_sign(softhsm, integration_config, sample_blob, tmp_path):
+def test_uefi_variable_sign(softhsm_shared, integration_config, sample_blob, tmp_path):
     signature_dest = tmp_path / "myvar.auth"
     with CertCache() as cc:
         uefi_variable_signer = UefiVariableSign(cc, integration_config.uefi)
@@ -50,7 +54,9 @@ def test_uefi_variable_sign(softhsm, integration_config, sample_blob, tmp_path):
 
 
 @pytest.mark.integration
-def test_kernel_module_sign(softhsm, integration_config, sample_ko_file, sign_file, tmp_path):
+def test_kernel_module_sign(
+    softhsm_shared, integration_config, sample_ko_file, sign_file, tmp_path
+):
     signature_dest = tmp_path / "signature.pk7"
     with CertCache() as cc:
         kernel_module_signer = LinuxModuleSign(cc, integration_config.kernel_modules)
@@ -77,7 +83,7 @@ def test_kernel_module_sign(softhsm, integration_config, sample_ko_file, sign_fi
 
 
 @pytest.mark.integration
-def test_hab4_sign(softhsm, integration_config, sample_hab4csf_file, sample_blob, tmp_path):
+def test_hab4_sign(softhsm_shared, integration_config, sample_hab4csf_file, sample_blob, tmp_path):
     path_to_minimal_hab4_bin = sample_blob.parent
     signed_csf_dest = tmp_path / "csf.bin"
     with CertCache() as cc:
@@ -99,8 +105,29 @@ def test_hab4_sign(softhsm, integration_config, sample_hab4csf_file, sample_blob
     )
 
 
+def test_hab4_sign_preflight_requires_complete_config():
+    job = Hab4SignJob(
+        csf_txt_in_path=Path("in.txt"), csf_bin_out_path=Path("out.bin"), auth_data_prefix=Path("/")
+    )
+    with CertCache() as cc:
+        hab4_signer = Hab4Sign(cc, Hab4SigningCfg())
+        with pytest.raises(OpensighubError, match="img_key, csf_key, and srk_index"):
+            hab4_signer.preflight(job)
+
+
+def test_raw_sign_preflight_requires_hash(unit_config):
+    job = RawSignJob(artifact=Path("in.bin"), signed_artifact=Path("out.bin"))
+    key = unit_config.signing_keys["acme-2025-ta-root"]
+    with CertCache() as cc:
+        raw_signer = RpiSign(cc, RawSigningCfg(key=key))
+        with pytest.raises(OpensighubError, match="'hash' configured"):
+            raw_signer.preflight(job)
+
+
 @pytest.mark.integration
-def test_uefi_variable_sign_cli(softhsm, integration_config_yaml_file, sample_blob, tmp_path):
+def test_uefi_variable_sign_cli(
+    softhsm_shared, integration_config_yaml_file, sample_blob, tmp_path
+):
     signed_artifact = tmp_path / "myvar.auth"
     sign_main(
         UefiVarSignCmd(
@@ -119,7 +146,7 @@ def test_uefi_variable_sign_cli(softhsm, integration_config_yaml_file, sample_bl
 
 
 @pytest.mark.integration
-def test_optee_ta_sign(softhsm, integration_config, sample_ta_file, sign_encrypt, tmp_path):
+def test_optee_ta_sign(softhsm_shared, integration_config, sample_ta_file, sign_encrypt, tmp_path):
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
         ver = 1
@@ -156,7 +183,7 @@ def test_optee_ta_sign(softhsm, integration_config, sample_ta_file, sign_encrypt
 
 @pytest.mark.integration
 def test_rpi_boot_sign(
-    softhsm, integration_config, sample_rpi_boot_file, rpi_eeprom_digest, tmp_path
+    softhsm_shared, integration_config, sample_rpi_boot_file, rpi_eeprom_digest, tmp_path
 ):
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
@@ -183,7 +210,7 @@ def test_rpi_boot_sign(
 
 @pytest.mark.integration
 def test_rpi_eeprom_sign(
-    softhsm, integration_config, sample_rpi_eeprom_file, rpi_sign_bootcode, tmp_path
+    softhsm_shared, integration_config, sample_rpi_eeprom_file, rpi_sign_bootcode, tmp_path
 ):
     signature_dest = tmp_path / "signature.bin"
     version = 0
@@ -238,7 +265,7 @@ def test_rpi_eeprom_sign(
 
 
 @pytest.mark.integration
-def test_swu_sign(softhsm, integration_config, swu_file, tmp_path):
+def test_swu_sign(softhsm_shared, integration_config, swu_file, tmp_path):
     sig_dest = tmp_path / "sign.swu"
     with CertCache() as cc:
         swu_signer = SwuSign(cc, integration_config.swu)

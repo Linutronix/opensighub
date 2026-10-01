@@ -29,7 +29,7 @@ from opensighub.util import CertCache, OpensighubError, Pkcs11Uri, raise_if_tool
 logger = logging.getLogger("opensighub")
 
 
-def confirm_overwrite(path: Path, force_overwrite: bool) -> None:
+def confirm_overwrite(path: Path | str, force_overwrite: bool) -> None:
     if force_overwrite:
         return
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -194,6 +194,7 @@ class UefiSign:
         """Sign (U)EFI PE/Coff binaries with sbsign."""
         artifact = Path(artifact).resolve()
         signed_artifact = Path(signed_artifact).resolve()
+        assert self.config.key.pkcs11_uri is not None
         key_uri = Pkcs11Uri.try_parse(self.config.key.pkcs11_uri)
         key_uri, cert_uri = key_uri.to_private_cert_pair()
         certificate_file = self.cert_cache[cert_uri]
@@ -234,6 +235,7 @@ class SwuSign:
     def sign(self, artifact: Path, signed_artifact: Path, detached: bool = True):
         """Sign swu file"""
         signed_artifact.parent.mkdir(parents=True, exist_ok=True)
+        assert self.config.key.pkcs11_uri is not None
         key_uri = Pkcs11Uri.try_parse(self.config.key.pkcs11_uri)
         key_uri, cert_uri = key_uri.to_private_cert_pair()
         certificate_file = self.cert_cache[cert_uri]
@@ -280,6 +282,7 @@ class UefiVariableSign:
         Output of the signing process is a file consisting of attributes, authentication descriptor with signature
         and the data itself.
         """
+        assert self.config.key.pkcs11_uri is not None
         key_uri = Pkcs11Uri.try_parse(self.config.key.pkcs11_uri)
         key_uri, cert_uri = key_uri.to_private_cert_pair()
         certificate_file = self.cert_cache[cert_uri]
@@ -331,6 +334,7 @@ class LinuxModuleSign:
         For further information see
         https://docs.kernel.org/admin-guide/module-signing.html
         """
+        assert self.config.key.pkcs11_uri is not None
         key_uri = Pkcs11Uri.try_parse(self.config.key.pkcs11_uri)
         key_uri, cert_uri = key_uri.to_private_cert_pair()
         certificate_file = self.cert_cache[cert_uri]
@@ -360,6 +364,14 @@ class Hab4Sign:
         self.config = config
 
     def preflight(self, job: Hab4SignJob) -> None:
+        if (
+            self.config.img_key is None
+            or self.config.csf_key is None
+            or self.config.srk_index is None
+        ):
+            raise OpensighubError(
+                "hab4 signing requires img_key, csf_key, and srk_index configured"
+            )
         raise_if_tool_missing("srktool", "cst")
 
     def make_srktable(self, output_dir: Path) -> Path:
@@ -473,6 +485,9 @@ class Hab4Sign:
         ):
             tmp_working_dir_path = Path(tmp_working_dir)
             srk_table = self.make_srktable(tmp_working_dir_path)
+            assert self.config.srk_index is not None
+            assert self.config.csf_key is not None and self.config.csf_key.pkcs11_uri is not None
+            assert self.config.img_key is not None and self.config.img_key.pkcs11_uri is not None
             self.csf_substitute(
                 csf_in,
                 csf_tmp_out,
@@ -494,10 +509,13 @@ class RawSign:
         self.config = config
 
     def preflight(self, job: RawSignJob) -> None:
+        if self.config.alg_hash is None:
+            raise OpensighubError("signing requires 'hash' configured")
         raise_if_tool_missing("openssl")
 
     def pkeyopt_args(self) -> list[str]:
         cfg = self.config
+        assert cfg.alg_hash is not None
         args = [
             "-pkeyopt",
             "digest:" + cfg.alg_hash,
@@ -520,6 +538,7 @@ class RawSign:
         Basic raw-signature: digest (raw bytes) -> signed_digest
         using openssl pkeyutl + pkcs11.
         """
+        assert self.config.key.pkcs11_uri is not None
         key_uri = Pkcs11Uri.try_parse(self.config.key.pkcs11_uri)
 
         cmd = (
@@ -551,6 +570,7 @@ class RawSign:
         Basic digest calculation: artifact (raw bytes) -> digest
         using openssl dgst.
         """
+        assert self.config.alg_hash is not None
         cmd = [
             "openssl",
             "dgst",
@@ -567,7 +587,8 @@ class RawSign:
 
 class OpteeTaSign(RawSign):
     def preflight(self, job: RawSignJob) -> None:
-        raise_if_tool_missing("openssl", "sign_encrypt.py")
+        super().preflight(job)
+        raise_if_tool_missing("sign_encrypt.py")
 
     def sign(self, artifact: Path, signed_artifact: Path, ta_ver: int | None) -> None:
         """
@@ -578,6 +599,7 @@ class OpteeTaSign(RawSign):
         """
         ta_uuid = artifact.name.removesuffix(".stripped.elf")
 
+        assert self.config.key.pkcs11_uri is not None
         key_uri = Pkcs11Uri.try_parse(self.config.key.pkcs11_uri)
         key_uri, pubkey_uri = key_uri.to_private_pubkey()
         pubkey_path = self.cert_cache[pubkey_uri]
@@ -652,7 +674,8 @@ class RpiSign(RawSign):
 
 class RpiEepromSign(RawSign):
     def preflight(self, job: RawSignJob) -> None:
-        raise_if_tool_missing("openssl", "rpi-sign-bootcode")
+        super().preflight(job)
+        raise_if_tool_missing("rpi-sign-bootcode")
 
     def sign(
         self, artifact: Path, signature: Path, version: int | None, keynum: int | None
