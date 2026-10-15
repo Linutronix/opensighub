@@ -328,10 +328,11 @@ def pkcs11_list_objects(token_uri: Pkcs11Uri) -> Iterator[Pkcs11Object]:
 
 def pkcs11_object_exists(uri: Pkcs11Uri) -> bool:
     assert uri.object is not None
-    key_id_hex = uri.object.encode().hex()
+    key_id = uri.object.encode()
     scope_uri = replace(uri, object=None, id=None)
     return any(
-        obj.label == uri.object or obj.id == key_id_hex for obj in pkcs11_list_objects(scope_uri)
+        obj.label == uri.object or bytes.fromhex(obj.id.replace(":", "")) == key_id
+        for obj in pkcs11_list_objects(scope_uri)
     )
 
 
