@@ -212,12 +212,13 @@ class CertCache:
         assert self.cert_pool
         if isinstance(uri, Pkcs11Uri):
             return self.exported_from_pkcs11(uri)
+        if not uri.lower().startswith("pkcs11:"):
+            return Path(uri)
         try:
             pkcs11uri = Pkcs11Uri.try_parse(uri)
-            return self.exported_from_pkcs11(pkcs11uri)
-        except ValueError:
-            # treat as file
-            return Path(uri)
+        except ValueError as e:
+            raise OpensighubError(f"Invalid PKCS#11 URI '{uri}': {e}") from e
+        return self.exported_from_pkcs11(pkcs11uri)
 
     def __exit__(self, _exc_type, _exc_val, _exc_tb):
         if self.cert_pool:
