@@ -7,15 +7,16 @@ import hashlib
 import logging
 import re
 import shutil
+import string
 import subprocess
 import tempfile
 from collections.abc import Iterator, MutableMapping, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, fields, replace
-from enum import StrEnum
+from dataclasses import dataclass, field, fields, replace
+from enum import Enum, StrEnum, auto
 from pathlib import Path
-from typing import ClassVar
-from urllib.parse import parse_qsl, urlparse, urlunparse
+from typing import Any, ClassVar
+from urllib.parse import quote, unquote, unquote_to_bytes
 
 logger = logging.getLogger("opensighub")
 
@@ -34,66 +35,147 @@ def raise_if_tool_missing(*tools: str) -> None:
         raise OpensighubError(f"{', '.join(missing)} not installed in PATH")
 
 
-@dataclass
-class Pkcs11UriQattr:
-    pin_source: str | None = None
-    pin_value: str | None = None
-    module_name: str | None = None
-    module_path: str | None = None
+class Pkcs11AttrCodec(Enum):
+    """Value syntax of a PKCS#11 URI attribute, following the RFC 7512 ABNF."""
+
+    TEXT = auto()
+    BINARY = auto()
+    DECIMAL = auto()
+    VERSION = auto()
+    OBJECT_TYPE = auto()
+
+    @property
+    def grammar(self) -> str | None:
+        match self:
+            case Pkcs11AttrCodec.DECIMAL:
+                return r"[0-9]+"
+            case Pkcs11AttrCodec.VERSION:
+                return r"[0-9]+(?:\.[0-9]+)?"
+            case Pkcs11AttrCodec.OBJECT_TYPE:
+                return r"public|private|cert|secret-key|data"
+            case _:
+                return None
+
+    def decode(self, value: str) -> Any:
+        match self:
+            case Pkcs11AttrCodec.BINARY:
+                return unquote_to_bytes(value)
+            case Pkcs11AttrCodec.DECIMAL:
+                return int(value)
+            case _:
+                return unquote(value, errors="strict")
+
+    def encode(self, value: Any, unencoded_chars: str) -> str:
+        match self:
+            case Pkcs11AttrCodec.BINARY:
+                return "".join(f"%{b:02X}" for b in value)
+            case Pkcs11AttrCodec.DECIMAL:
+                return str(value)
+            case _:
+                return quote(value, safe=unencoded_chars)
+
+    def attr(self) -> Any:
+        return field(default=None, metadata={"codec": self})
 
 
 @dataclass
-class Pkcs11Uri:
-    pk11_path_res_avail: ClassVar[re.Pattern] = re.compile(r"^[a-zA-Z0-9:\[\]@!$'()*+,=&.~_-]+$")
-    pk11_query_res_avail: ClassVar[re.Pattern] = re.compile(
-        r"^[a-zA-Z0-9:\[\]@!$'()*+,=&/?|.~_-]+$"
-    )
+class Pkcs11UriAttrs:
+    """Attributes of a PKCS#11 URI path or query, joined by separator."""
 
-    token: str | None = None
-    manufacturer: str | None = None
-    serial: str | None = None
-    model: str | None = None
-    library_manufacturer: str | None = None
-    library_description: str | None = None
-    library_version: str | None = None
-    object: str | None = None  # CKA_LABEL in PKCS #11 API
-    type: str | None = None
-    id: str | None = None  # CKA_ID in PKCS #11 API
-    slot_description: str | None = None
-    slot_manufacturer: str | None = None
-    slot_id: str | None = None
+    # all characters except unencoded_chars are percent-encoded in a value
+    unreserved_chars: ClassVar[str] = string.ascii_letters + string.digits + "-._~"
+    separator: ClassVar[str]
+    unencoded_chars: ClassVar[str]
+    value_pattern: ClassVar[re.Pattern]
+
+    @classmethod
+    def _parse_attrs(cls, part: str) -> dict[str, Any]:
+        attr_fields = {f.name.replace("_", "-"): f for f in fields(cls) if "codec" in f.metadata}
+        attrs: dict[str, Any] = {}
+        if not part:
+            return attrs
+        for attr in part.split(cls.separator):
+            name, eq, value = attr.partition("=")
+            if not eq:
+                raise ValueError(f"PKCS#11 URI attribute '{attr}' has no value")
+            attr_field = attr_fields.get(name)
+            if attr_field is None:
+                raise ValueError(f"unsupported PKCS#11 URI attribute '{name}'")
+            if attr_field.name in attrs:
+                raise ValueError(f"duplicate PKCS#11 URI attribute '{name}'")
+            codec: Pkcs11AttrCodec = attr_field.metadata["codec"]
+            if not cls.value_pattern.fullmatch(value) or (
+                codec.grammar is not None and not re.fullmatch(codec.grammar, value)
+            ):
+                raise ValueError(f"invalid value for PKCS#11 URI attribute '{name}'")
+            try:
+                attrs[attr_field.name] = codec.decode(value)
+            except UnicodeDecodeError as e:
+                raise ValueError(f"PKCS#11 URI attribute '{name}' is not valid UTF-8") from e
+        return attrs
+
+    def _format_attrs(self) -> list[str]:
+        return [
+            f"{f.name.replace('_', '-')}={f.metadata['codec'].encode(value, self.unencoded_chars)}"
+            for f in fields(self)
+            if "codec" in f.metadata and (value := getattr(self, f.name)) is not None
+        ]
+
+
+@dataclass
+class Pkcs11UriQattr(Pkcs11UriAttrs):
+    separator = "&"
+    unencoded_chars = Pkcs11UriAttrs.unreserved_chars + ":[]@!$'()*+,=/?|"
+    value_pattern = re.compile(rf"(?:[{re.escape(unencoded_chars)}]|%[0-9a-fA-F]{{2}})*")
+
+    pin_source: str | None = Pkcs11AttrCodec.TEXT.attr()
+    pin_value: str | None = Pkcs11AttrCodec.TEXT.attr()
+    module_name: str | None = Pkcs11AttrCodec.TEXT.attr()
+    module_path: str | None = Pkcs11AttrCodec.TEXT.attr()
+
+
+@dataclass
+class Pkcs11Uri(Pkcs11UriAttrs):
+    """PKCS#11 URI with attribute values in their decoded Python representation.
+
+    Values are percent-decoded by try_parse() and percent-encoded by __str__().
+
+    See also
+    https://www.rfc-editor.org/rfc/rfc3986
+    https://www.rfc-editor.org/rfc/rfc7512.html
+    """
+
+    separator = ";"
+    unencoded_chars = Pkcs11UriAttrs.unreserved_chars + ":[]@!$'()*+,=&"
+    value_pattern = re.compile(rf"(?:[{re.escape(unencoded_chars)}]|%[0-9a-fA-F]{{2}})*")
+
+    token: str | None = Pkcs11AttrCodec.TEXT.attr()
+    manufacturer: str | None = Pkcs11AttrCodec.TEXT.attr()
+    serial: str | None = Pkcs11AttrCodec.TEXT.attr()
+    model: str | None = Pkcs11AttrCodec.TEXT.attr()
+    library_manufacturer: str | None = Pkcs11AttrCodec.TEXT.attr()
+    library_description: str | None = Pkcs11AttrCodec.TEXT.attr()
+    library_version: str | None = Pkcs11AttrCodec.VERSION.attr()
+    object: str | None = Pkcs11AttrCodec.TEXT.attr()  # CKA_LABEL in PKCS #11 API
+    type: str | None = Pkcs11AttrCodec.OBJECT_TYPE.attr()
+    id: bytes | None = Pkcs11AttrCodec.BINARY.attr()  # CKA_ID in PKCS #11 API
+    slot_description: str | None = Pkcs11AttrCodec.TEXT.attr()
+    slot_manufacturer: str | None = Pkcs11AttrCodec.TEXT.attr()
+    slot_id: int | None = Pkcs11AttrCodec.DECIMAL.attr()
     qattr: Pkcs11UriQattr | None = None
-
-    @staticmethod
-    def matched(pattern: re.Pattern, value: str):
-        if not pattern.match(value):
-            raise ValueError("invalid characters in PKCS#11 URI")
-        return value
 
     @classmethod
     def try_parse(cls, uri: str) -> "Pkcs11Uri":
-        """Decompose a PKCS#11 URI string into a structured Python type.
-
-        See also
-        https://www.rfc-editor.org/rfc/rfc3986
-        https://www.rfc-editor.org/rfc/rfc7512.html
-        """
-        result = urlparse(uri)
-        if result.scheme != "pkcs11":
+        """Decompose a PKCS#11 URI string into a structured Python type."""
+        scheme, colon, rest = uri.partition(":")
+        if not colon or scheme.lower() != "pkcs11":
             raise ValueError("Not a PKCS #11 URI")
-        path_attrs = result.path.split(";")
-        attr_dict = {}
-        qattr_dict = {}
-        for attr in path_attrs:
-            k, v = attr.split("=")
-            k = k.replace("-", "_")
-            attr_dict[k] = cls.matched(cls.pk11_path_res_avail, v)
-        if result.query:
-            qattr_dict = {
-                k.replace("-", "_"): cls.matched(cls.pk11_query_res_avail, v)
-                for k, v in parse_qsl(result.query)
-            }
-        return cls(**attr_dict, qattr=Pkcs11UriQattr(**qattr_dict) if qattr_dict else None)
+        if "#" in rest:
+            raise ValueError("PKCS#11 URI must not contain a fragment")
+        path, _, query = rest.partition("?")
+        path_vals = cls._parse_attrs(path)
+        query_vals = Pkcs11UriQattr._parse_attrs(query)
+        return cls(**path_vals, qattr=Pkcs11UriQattr(**query_vals) if query_vals else None)
 
     def to_private_cert_pair(self):
         return replace(self, type="private"), replace(self, type="cert")
@@ -107,20 +189,9 @@ class Pkcs11Uri:
         return b""
 
     def __str__(self):
-        path = [
-            f"{field.name.replace('_', '-')}={getattr(self, field.name)}"
-            for field in filter(lambda f: f.name != "qattr", fields(self.__class__))
-            if getattr(self, field.name) is not None
-        ]
-        if self.qattr:
-            query = [
-                f"{field.name.replace('_', '-')}={getattr(self.qattr, field.name)}"
-                for field in fields(self.qattr.__class__)
-                if getattr(self.qattr, field.name) is not None
-            ]
-        else:
-            query = []
-        return urlunparse(("pkcs11", "", ";".join(path), "", "&".join(query), ""))
+        path = self._format_attrs()
+        query = self.qattr._format_attrs() if self.qattr else []
+        return f"pkcs11:{';'.join(path)}" + (f"?{'&'.join(query)}" if query else "")
 
 
 class CertCache:
@@ -128,7 +199,7 @@ class CertCache:
     certificates from PKCS#11 to filesystem"""
 
     def __init__(
-        self, cert_dict: MutableMapping[tuple[str | None, str | None], Path] | None = None
+        self, cert_dict: MutableMapping[tuple[bytes | None, str | None], Path] | None = None
     ):
         self.cert_pool: tempfile.TemporaryDirectory | None = None
         self.by_pkcs11_id_label = {} if cert_dict is None else cert_dict
@@ -171,7 +242,7 @@ class MultiprocessingCertCache(CertCache):
 
     def __init__(
         self,
-        shared_cert_dict: MutableMapping[tuple[str | None, str | None], Path],
+        shared_cert_dict: MutableMapping[tuple[bytes | None, str | None], Path],
         lock: AbstractContextManager,
     ):
         super().__init__(shared_cert_dict)
