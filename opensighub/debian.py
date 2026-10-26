@@ -23,7 +23,7 @@ from opensighub.signers import (
     UefiSignJob,
     confirm_overwrite,
 )
-from opensighub.util import raise_if_tool_missing
+from opensighub.util import OpensighubError, raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
 
@@ -136,11 +136,25 @@ class LocalPackagePool:
         subprocess.check_call(cmd, cwd=self.download_dir)
 
     def extract_pkg(self, pkg: str, version: str, arch: str) -> Path:
+        deb_file = self.download_dir / self.build_pkg_deb_name(pkg, version, arch)
+        if not deb_file.is_file():
+            all_deb_file = self.download_dir / self.build_pkg_deb_name(pkg, version, "all")
+            if all_deb_file.is_file():
+                deb_file = all_deb_file
+                arch = "all"
+            else:
+                msg = (
+                    f"Package file not found for {pkg}={version}: "
+                    f"neither '{deb_file.name}' nor '{all_deb_file.name}' exists in {self.download_dir}"
+                    if arch != "all"
+                    else f"Package file '{deb_file.name}' not found in {self.download_dir}"
+                )
+                raise OpensighubError(msg)
+
         pkg_full_name = self.build_pkg_full_name(pkg, version, arch)
-        pkg_file_name = self.build_pkg_deb_name(pkg, version, arch)
         unpack_dir = self.extracted_dir / pkg_full_name
         os.makedirs(unpack_dir)
-        cmd = ["dpkg", "-x", pkg_file_name, unpack_dir]
+        cmd = ["dpkg", "-x", deb_file.name, unpack_dir]
         logger.info("Extracting %s", pkg)
         logger.debug("%s", " ".join([str(arg) for arg in cmd]))
         subprocess.check_call(cmd, cwd=self.download_dir)
