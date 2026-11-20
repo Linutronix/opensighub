@@ -29,20 +29,26 @@ from opensighub.util import CertCache, OpensighubError, Pkcs11Uri, raise_if_tool
 logger = logging.getLogger("opensighub")
 
 
-def confirm_overwrite(path: Path | str, force_overwrite: bool) -> None:
-    if force_overwrite:
+def confirm_yn(question: str, refusal: str, force: bool) -> None:
+    """Ask a y/n question on a terminal unless forced. Without a terminal, refuse."""
+    if force:
         return
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        raise OpensighubError(
-            f"Not overwriting '{path}' in non-interactive mode. Pass different --output "
-            "or -y/--yes."
-        )
-    try:
-        answer = input(f"opensighub: overwrite '{path}' (y/n)? ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() != "y":
-        raise OpensighubError(f"not overwriting '{path}'")
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            answer = input(f"opensighub: {question} (y/n)? ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() == "y":
+            return
+    raise OpensighubError(refusal)
+
+
+def confirm_overwrite(path: Path | str, force_overwrite: bool) -> None:
+    confirm_yn(
+        f"overwrite '{path}'",
+        f"Not overwriting '{path}'. Pass different --output or -y/--yes.",
+        force_overwrite,
+    )
 
 
 @dataclass

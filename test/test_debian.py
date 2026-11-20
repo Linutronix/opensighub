@@ -56,7 +56,6 @@ def test_debsign(tmp_path, softhsm_shared, integration_config_yaml_file):
                 ),
             ],
             parallel=5,
-            force_overwrite=False,
         )
     )
     pkg = "opensighub-test-package-signed"
@@ -86,7 +85,6 @@ def test_debian_org_sign_and_build_shim(tmp_path, softhsm_shared, integration_co
                 ),
             ],
             parallel=5,
-            force_overwrite=False,
             run_sbuild=True,
             sbuild_args=["--no-clean-source"],
         )

@@ -141,6 +141,12 @@ def test_config_save_writes_to_source(unit_config_yaml, tmp_path):
     assert Config.from_dict(yaml.safe_load((tmp_path / "config.yaml").read_text())) == cfg
 
 
+def test_config_save_creates_parent_directory(tmp_path):
+    cfg = Config.from_dict({}, source=tmp_path / "new" / "config.yaml")
+    cfg.save()
+    assert (tmp_path / "new" / "config.yaml").exists()
+
+
 def test_config_save_without_source_raises(unit_config_yaml):
     cfg_dict = yaml.safe_load(unit_config_yaml)
     cfg = Config.from_dict(cfg_dict)
@@ -337,3 +343,15 @@ def test_debarchiveentry_to_dict_omits_defaults():
 def test_signing_key_to_dict_excludes_ref():
     key = SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=x", cfg_id_init="foo")
     assert key.to_dict() == {"pkcs11_uri": "pkcs11:token=SoftHSM;object=x"}
+
+
+@pytest.mark.parametrize("data", [{}, {"signing-keys": None}])
+def test_config_create_missing_top_level_fields(data):
+    cfg = Config.from_dict(data)
+    assert cfg.signing_keys == {}
+    assert cfg.to_dict()["signing-keys"] == {}
+
+
+def test_config_missing_key():
+    with pytest.raises(OpensighubError, match="'acme-unknown' missing or unknown"):
+        Config.from_dict({"signing-keys": {}, "swu": {"key": "acme-unknown"}})

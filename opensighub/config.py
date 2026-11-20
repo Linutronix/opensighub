@@ -277,6 +277,14 @@ class Config:
 
     @classmethod
     def from_dict(cls, data: dict, source: Path | None = None):
+        try:
+            return cls._create_from_dict(data, source)
+        except KeyError as e:
+            location = f" in {source}" if source else ""
+            raise OpensighubError(f"Config entry {e} missing or unknown{location}") from e
+
+    @classmethod
+    def _create_from_dict(cls, data: dict, source: Path | None):
         if (log_level_str := data.get("log-level")) is not None:
             log_level = logging.getLevelNamesMapping().get(log_level_str)
             if not log_level:
@@ -284,16 +292,14 @@ class Config:
                 log_level = logging.INFO
         else:
             log_level = logging.INFO
-        archives = {k: Archive.from_dict(v) for k, v in data.get("archives", {}).items()}
-        signing_keys = {sk: SigningKey.from_dict(sk, sv) for sk, sv in data["signing-keys"].items()}
-        trusted_certificates = (
-            {
-                k: PublicKeyCertificate.from_dict(k, v)
-                for k, v in data["trusted-certificates"].items()
-            }
-            if "trusted-certificates" in data
-            else {}
-        )
+        archives = {k: Archive.from_dict(v) for k, v in (data.get("archives") or {}).items()}
+        signing_keys = {
+            sk: SigningKey.from_dict(sk, sv) for sk, sv in (data.get("signing-keys") or {}).items()
+        }
+        trusted_certificates = {
+            k: PublicKeyCertificate.from_dict(k, v)
+            for k, v in (data.get("trusted-certificates") or {}).items()
+        }
         uefi_cfg = UefiSigningCfg.from_dict(data["uefi"], signing_keys) if "uefi" in data else None
         swu_cfg = SwuSigningCfg.from_dict(data["swu"], signing_keys) if "swu" in data else None
         kernel_modules_cfg = (
@@ -355,6 +361,7 @@ class Config:
     def save(self) -> None:
         if self._source is None:
             raise OpensighubError("Config has no source path to save to")
+        self._source.parent.mkdir(parents=True, exist_ok=True)
         self._source.write_text(yaml.safe_dump(self.to_dict(), sort_keys=False))
 
     def add_signing_key(self, key_id: str, pkcs11_uri: str) -> None:
