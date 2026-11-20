@@ -188,6 +188,11 @@ class Pkcs11Uri(Pkcs11UriAttrs):
             return (Path(self.qattr.pin_source).read_text() + "\n").encode()
         return b""
 
+    def provides_pin(self) -> bool:
+        return self.qattr is not None and (
+            self.qattr.pin_source is not None or self.qattr.pin_value is not None
+        )
+
     def __str__(self):
         path = self._format_attrs()
         query = self.qattr._format_attrs() if self.qattr else []
@@ -354,7 +359,7 @@ def pkcs11_generate_keypair(token_uri: Pkcs11Uri, key_id: str, key_properties: K
                     if key_properties.key_type == KeyType.RSA
                     else ["--curve", str(key_properties.curve)]
                 ),
-                "--login",
+                *(["--login"] if token_uri.provides_pin() else []),
                 str(token_uri),
             ],
             input=token_uri.pin_source_content(),
@@ -378,7 +383,7 @@ def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
                 f"--file={pem_file}",
                 "--label",
                 key_id,
-                "--login",
+                *(["--login"] if token_uri.provides_pin() else []),
                 str(token_uri),
             ],
             input=token_uri.pin_source_content(),
@@ -395,7 +400,7 @@ def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
 
 def pkcs11_delete_object(uri: Pkcs11Uri) -> None:
     result = subprocess.run(
-        ["p11-kit", "delete-object", "--login", str(uri)],
+        ["p11-kit", "delete-object", *(["--login"] if uri.provides_pin() else []), str(uri)],
         input=uri.pin_source_content(),
         capture_output=True,
         check=False,

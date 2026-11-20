@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -391,3 +392,10 @@ def unit_config(unit_config_yaml):
     # repo_pubkey_file, signing_config_yaml_block
     cfg_dict = yaml.safe_load(unit_config_yaml)
     return Config.from_dict(cfg_dict)
+
+
+@pytest.fixture
+def subprocess_fake_run(monkeypatch):
+    run = MagicMock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
+    monkeypatch.setattr("subprocess.run", run)
+    return run

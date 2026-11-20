@@ -6,7 +6,13 @@ from dataclasses import replace
 
 import pytest
 
-from opensighub.util import CertCache, Pkcs11Uri, Pkcs11UriQattr
+from opensighub.util import (
+    CertCache,
+    KeyProperties,
+    Pkcs11Uri,
+    Pkcs11UriQattr,
+    pkcs11_generate_keypair,
+)
 
 
 def test_pkcs11uri_parse():
@@ -153,3 +159,17 @@ def test_cert_from_file(tmp_path):
     cert_file.write_text("dummy cert content")
     with CertCache() as cc, open(cc[str(cert_file)]) as f:
         assert len(f.read()) > 0
+
+
+@pytest.mark.parametrize(
+    ("qattr", "login"),
+    [
+        (Pkcs11UriQattr(pin_source="/dev/null"), True),
+        (Pkcs11UriQattr(pin_value="1234"), True),
+        (Pkcs11UriQattr(), False),
+        (None, False),
+    ],
+)
+def test_pkcs11_login_only_with_pin(subprocess_fake_run, qattr, login):
+    pkcs11_generate_keypair(Pkcs11Uri(token="t", qattr=qattr), "k", KeyProperties())
+    assert ("--login" in subprocess_fake_run.call_args.args[0]) == login
