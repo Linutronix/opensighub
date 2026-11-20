@@ -2,9 +2,14 @@
 #
 # SPDX-License-Identifier: 0BSD
 
+import os
+import shutil
+import signal
+import subprocess
 from pathlib import Path
 
 import pytest
+from helpers import wait_for
 
 from opensighub.cli import (
     DebSignCmd,
@@ -167,3 +172,36 @@ def test_cli_efibinarysign_detached():
         output=Path("/test/dir"),
         parallel=5,
     )
+
+
+@pytest.mark.integration
+def test_main_terminates_workers_on_interrupt(
+    softhsm_shared,
+    integration_config_yaml_file,
+    sample_efi_file,
+    hanging_sbsign,
+    opensighub_cli,
+    tmp_path,
+):
+    def process_group_exists(pgid: int) -> bool:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    binaries = [shutil.copy(sample_efi_file, tmp_path / f"{name}.efi") for name in ("a", "b")]
+    proc = opensighub_cli(
+        *("-c", integration_config_yaml_file, "-o", tmp_path / "out", "-p", "2"),
+        *("efibinarysign", *binaries),
+        stderr=subprocess.PIPE,
+    )
+    wait_for(lambda: hanging_sbsign.exists() and len(hanging_sbsign.read_text().split()) == 2)
+
+    os.killpg(proc.pid, signal.SIGINT)
+    _, stderr = proc.communicate(timeout=5)
+
+    assert proc.returncode == 128 + signal.SIGINT
+    assert stderr.endswith("opensighub: interrupted\n")
+    assert "Traceback" not in stderr
+    wait_for(lambda: not process_group_exists(proc.pid), timeout=2)

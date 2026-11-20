@@ -2,9 +2,13 @@
 #
 # SPDX-License-Identifier: 0BSD
 
+import contextlib
 import os
+import shlex
 import shutil
+import signal
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -399,3 +403,39 @@ def subprocess_fake_run(monkeypatch):
     run = MagicMock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
     monkeypatch.setattr("subprocess.run", run)
     return run
+
+
+@pytest.fixture
+def opensighub_cli(project_root_path):
+    """Start the opensighub command line in a separate process, as a user would. Each process
+    leads its own process group, which is killed on teardown."""
+    procs: list[subprocess.Popen] = []
+
+    def start(*args: str | Path, **popen_kwargs) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "opensighub.cli", *map(str, args)],
+            cwd=project_root_path,
+            start_new_session=True,
+            **{"text": True, **popen_kwargs},
+        )
+        procs.append(proc)
+        return proc
+
+    yield start
+    for proc in procs:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+
+
+@pytest.fixture
+def hanging_sbsign(tmp_path, monkeypatch):
+    """Put an sbsign on PATH that never returns. Each call appends a line to the returned file."""
+    bin_dir = tmp_path / "hanging-bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "sbsign-calls"
+    sbsign = bin_dir / "sbsign"
+    sbsign.write_text(f"#!/bin/sh\necho $$ >> {shlex.quote(str(calls))}\nexec sleep 60\n")
+    sbsign.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return calls

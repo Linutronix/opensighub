@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -791,6 +792,11 @@ class SignerRegistry:
         job.sign(self)
 
 
+def _worker_init() -> None:
+    # Leave Ctrl-C handling to the main process. It sends SIGTERM to workers.
+    signal.signal(signal.SIGINT, lambda _signum, _frame: None)
+
+
 class SigningPool:
     def __init__(
         self,
@@ -819,5 +825,5 @@ class SigningPool:
     def sign(self, jobs: Sequence[Job]):
         for job in jobs:
             self.registry.preflight(job)
-        with Pool(processes=self.parallel) as p:
+        with Pool(self.parallel, _worker_init) as p:
             p.map(self.registry.sign, jobs)

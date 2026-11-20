@@ -5,6 +5,7 @@
 import argparse
 import logging
 import multiprocessing
+import signal
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -848,6 +849,9 @@ def main():
     except OpensighubError as e:
         print(f"opensighub: error: {e}", file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        print("opensighub: interrupted", file=sys.stderr)
+        sys.exit(128 + signal.SIGINT)
 
 
 if __name__ == "__main__":
