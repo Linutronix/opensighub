@@ -93,5 +93,7 @@ longer needed:
 
 ```
 opensighub setup delkey myos1
-Key 'myos1' deleted from token and removed from /home/user/.config/opensighub/config.yaml.
+Certificate 'myos1' deleted from opensighub-local.
+Key 'myos1' deleted from opensighub-local.
+Key 'myos1' removed from /home/user/.config/opensighub/config.yaml.
 ```

@@ -5,6 +5,7 @@
 import argparse
 import logging
 import multiprocessing
+import signal
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ from enum import Enum
 from functools import cached_property
 from importlib.metadata import version
 from pathlib import Path
-from typing import TypeVar
+from typing import ClassVar, TypeVar
 
 import yaml
 from platformdirs import user_config_path
@@ -33,6 +34,7 @@ from opensighub.signers import (
     UefiSignJob,
     UefiVariableSign,
     UefiVariableSignJob,
+    confirm_yn,
 )
 from opensighub.util import MultiprocessingCertCache, OpensighubError
 
@@ -96,13 +98,25 @@ _LISTKEYS_KEY_ID_COMPLETE = {
 
 @dataclass
 class BaseCmd:
+    allow_create_config: ClassVar[bool] = False
+
     config_path: Path
     output: Path
+    assume_yes: bool = field(default=False, kw_only=True)
 
     @cached_property
     def config(self) -> Config:
         try:
             cfg_dict = yaml.safe_load(self.config_path.read_text()) or {}
+        except FileNotFoundError:
+            if not self.allow_create_config:
+                raise OpensighubError(f"Config file '{self.config_path}' does not exist") from None
+            confirm_yn(
+                f"config file '{self.config_path}' does not exist, create it",
+                f"Not creating config file '{self.config_path}'. Pass -y/--yes to create it.",
+                self.assume_yes,
+            )
+            cfg_dict = {}
         except OSError as e:
             raise OpensighubError(f"Could not read config file: {e}") from e
         return Config.from_dict(cfg_dict, source=self.config_path)
@@ -111,7 +125,6 @@ class BaseCmd:
 @dataclass
 class SigningBaseCmd(BaseCmd):
     parallel: int
-    force_overwrite: bool
 
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
@@ -133,10 +146,10 @@ class DebSignCmd(SigningBaseCmd):
             Path(self.output),
             self.run_sbuild,
             self.sbuild_args,
-            self.force_overwrite,
+            self.assume_yes,
         )
         worker = SigningPool(
-            UefiSign(cert_cache, config.uefi, self.force_overwrite) if config.uefi else None,
+            UefiSign(cert_cache, config.uefi, self.assume_yes) if config.uefi else None,
             None,  # UefiVariableSign
             None,  # SwuSign
             LinuxModuleSign(cert_cache, config.kernel_modules) if config.kernel_modules else None,
@@ -213,7 +226,7 @@ class EfiBinarySignCmd(SigningBaseCmd):
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
         pool = SigningPool(
-            UefiSign(cert_cache, config.uefi, self.force_overwrite) if config.uefi else None,
+            UefiSign(cert_cache, config.uefi, self.assume_yes) if config.uefi else None,
             None,  # uefi_variable_signer
             None,  # swu_signer
             None,  # linux_module_signer
@@ -237,6 +250,8 @@ class SoftHsmCmd(BaseCmd):
 
 @dataclass
 class GenKeyCmd(BaseCmd):
+    allow_create_config = True
+
     key_id: str
     key_properties: setup.KeyProperties
     token: str
@@ -253,7 +268,6 @@ class DelKeyCmd(BaseCmd):
 class ImportCertCmd(BaseCmd):
     cert_path: Path
     key_id: str | None
-    force_overwrite: bool
 
 
 @dataclass
@@ -266,7 +280,6 @@ class ListKeysCmd(BaseCmd):
 class CsrCmd(BaseCmd):
     key_id: str
     subject: setup.Subject
-    force_overwrite: bool
     purpose: list[setup.ExtendedKeyUsage] | None
 
 
@@ -656,6 +669,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         return GenKeyCmd(
             config_path=Path(args.config),
             output=Path(args.output),
+            assume_yes=args.yes,
             key_id=args.key_id,
             key_properties=setup.KeyProperties(
                 key_type=args.key_type,
@@ -678,7 +692,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             output=Path(args.output),
             key_id=args.key_id,
             cert_path=args.cert_path,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     if args.command == "setup" and args.setup_command == "listkeys":
         return ListKeysCmd(
@@ -701,7 +715,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 common_name=args.common_name,
                 email_address=args.email_address,
             ),
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
             purpose=args.purpose,
         )
     if args.command == "debsign" and args.passthrough_args and not args.build:
@@ -713,7 +727,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     if args.command == "efibinarysign":
         detached = args.detached
@@ -730,7 +744,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 for binary in args.binaries
             ],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     if args.command == "uefivarsign":
         return UefiVarSignCmd(
@@ -743,7 +757,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 for name, blob in (v.split(":") for v in args.variables)
             ],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     elif args.command == "debsign":
         return DebSignCmd(
@@ -760,7 +774,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 for template in args.templates
             ],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
             run_sbuild=args.build,
             sbuild_args=args.passthrough_args,
         )
@@ -802,7 +816,7 @@ def run_setup(run_config: SetupCmd) -> None:
             run_config.config,
             run_config.cert_path,
             run_config.key_id,
-            run_config.force_overwrite,
+            run_config.assume_yes,
         )
     elif isinstance(run_config, ListKeysCmd):
         key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
@@ -813,7 +827,7 @@ def run_setup(run_config: SetupCmd) -> None:
             run_config.key_id,
             run_config.output,
             run_config.subject,
-            run_config.force_overwrite,
+            run_config.assume_yes,
             run_config.purpose,
         )
     else:
@@ -835,6 +849,9 @@ def main():
     except OpensighubError as e:
         print(f"opensighub: error: {e}", file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        print("opensighub: interrupted", file=sys.stderr)
+        sys.exit(128 + signal.SIGINT)
 
 
 if __name__ == "__main__":

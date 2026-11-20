@@ -2,11 +2,23 @@
 #
 # SPDX-License-Identifier: 0BSD
 
+import os
+import shutil
+import signal
+import subprocess
 from pathlib import Path
 
 import pytest
+from helpers import wait_for
 
-from opensighub.cli import DebSignCmd, EfiBinarySignCmd, UefiVarSignCmd, parse_args, sign_main
+from opensighub.cli import (
+    DebSignCmd,
+    EfiBinarySignCmd,
+    GenKeyCmd,
+    UefiVarSignCmd,
+    parse_args,
+    sign_main,
+)
 from opensighub.debian import DebianSigningJob
 from opensighub.signers import UefiSignJob, UefiVariableSignJob
 from opensighub.util import OpensighubError
@@ -31,7 +43,6 @@ def test_cli():
         ],
         output=Path("/test/dir"),
         parallel=5,
-        force_overwrite=False,
     )
 
 
@@ -54,7 +65,6 @@ def test_cli_efibinarysign_attached_default():
         ],
         output=Path("/test/dir"),
         parallel=5,
-        force_overwrite=False,
     )
 
 
@@ -64,10 +74,21 @@ def test_sign_main_missing_config_raises_opensighub_error(tmp_path):
         output=tmp_path,
         jobs=[],
         parallel=5,
-        force_overwrite=False,
     )
-    with pytest.raises(OpensighubError, match="Could not read config file"):
+    with pytest.raises(OpensighubError, match="does not exist"):
         sign_main(run_config)
+
+
+def test_cli_with_empty_config(tmp_path):
+    # some commands support auto generation of config
+    run_config = parse_args(["--config", str(tmp_path / "new.yaml"), "-y", "setup", "genkey"])
+    assert isinstance(run_config, GenKeyCmd)
+    assert run_config.config.signing_keys == {}
+
+    # auto config generation must be explicitely allowed
+    run_config = parse_args(["--config", str(tmp_path / "new.yaml"), "setup", "genkey"])
+    with pytest.raises(OpensighubError, match="Not creating config file"):
+        _ = run_config.config
 
 
 def test_cli_debsign_build_passes_through_sbuild_args():
@@ -104,7 +125,6 @@ def test_cli_debsign_build_passes_through_sbuild_args():
         ],
         output=Path("/test/dir"),
         parallel=5,
-        force_overwrite=False,
         run_sbuild=True,
         sbuild_args=["--no-clean-source"],
     )
@@ -151,5 +171,37 @@ def test_cli_efibinarysign_detached():
         ],
         output=Path("/test/dir"),
         parallel=5,
-        force_overwrite=False,
     )
+
+
+@pytest.mark.integration
+def test_main_terminates_workers_on_interrupt(
+    softhsm_shared,
+    integration_config_yaml_file,
+    sample_efi_file,
+    hanging_sbsign,
+    opensighub_cli,
+    tmp_path,
+):
+    def process_group_exists(pgid: int) -> bool:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    binaries = [shutil.copy(sample_efi_file, tmp_path / f"{name}.efi") for name in ("a", "b")]
+    proc = opensighub_cli(
+        *("-c", integration_config_yaml_file, "-o", tmp_path / "out", "-p", "2"),
+        *("efibinarysign", *binaries),
+        stderr=subprocess.PIPE,
+    )
+    wait_for(lambda: hanging_sbsign.exists() and len(hanging_sbsign.read_text().split()) == 2)
+
+    os.killpg(proc.pid, signal.SIGINT)
+    _, stderr = proc.communicate(timeout=5)
+
+    assert proc.returncode == 128 + signal.SIGINT
+    assert stderr.endswith("opensighub: interrupted\n")
+    assert "Traceback" not in stderr
+    wait_for(lambda: not process_group_exists(proc.pid), timeout=2)

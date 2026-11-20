@@ -35,6 +35,16 @@ def raise_if_tool_missing(*tools: str) -> None:
         raise OpensighubError(f"{', '.join(missing)} not installed in PATH")
 
 
+class Pkcs11ObjectType(StrEnum):
+    """Object class as named by the type attribute of a PKCS#11 URI (RFC 7512)."""
+
+    PUBLIC = "public"
+    PRIVATE = "private"
+    CERT = "cert"
+    SECRET_KEY = "secret-key"
+    DATA = "data"
+
+
 class Pkcs11AttrCodec(Enum):
     """Value syntax of a PKCS#11 URI attribute, following the RFC 7512 ABNF."""
 
@@ -52,7 +62,7 @@ class Pkcs11AttrCodec(Enum):
             case Pkcs11AttrCodec.VERSION:
                 return r"[0-9]+(?:\.[0-9]+)?"
             case Pkcs11AttrCodec.OBJECT_TYPE:
-                return r"public|private|cert|secret-key|data"
+                return "|".join(Pkcs11ObjectType)
             case _:
                 return None
 
@@ -62,6 +72,8 @@ class Pkcs11AttrCodec(Enum):
                 return unquote_to_bytes(value)
             case Pkcs11AttrCodec.DECIMAL:
                 return int(value)
+            case Pkcs11AttrCodec.OBJECT_TYPE:
+                return Pkcs11ObjectType(value)
             case _:
                 return unquote(value, errors="strict")
 
@@ -157,7 +169,7 @@ class Pkcs11Uri(Pkcs11UriAttrs):
     library_description: str | None = Pkcs11AttrCodec.TEXT.attr()
     library_version: str | None = Pkcs11AttrCodec.VERSION.attr()
     object: str | None = Pkcs11AttrCodec.TEXT.attr()  # CKA_LABEL in PKCS #11 API
-    type: str | None = Pkcs11AttrCodec.OBJECT_TYPE.attr()
+    type: Pkcs11ObjectType | None = Pkcs11AttrCodec.OBJECT_TYPE.attr()
     id: bytes | None = Pkcs11AttrCodec.BINARY.attr()  # CKA_ID in PKCS #11 API
     slot_description: str | None = Pkcs11AttrCodec.TEXT.attr()
     slot_manufacturer: str | None = Pkcs11AttrCodec.TEXT.attr()
@@ -178,15 +190,24 @@ class Pkcs11Uri(Pkcs11UriAttrs):
         return cls(**path_vals, qattr=Pkcs11UriQattr(**query_vals) if query_vals else None)
 
     def to_private_cert_pair(self):
-        return replace(self, type="private"), replace(self, type="cert")
+        return replace(self, type=Pkcs11ObjectType.PRIVATE), replace(
+            self, type=Pkcs11ObjectType.CERT
+        )
 
     def to_private_pubkey(self):
-        return replace(self, type="private"), replace(self, type="public")
+        return replace(self, type=Pkcs11ObjectType.PRIVATE), replace(
+            self, type=Pkcs11ObjectType.PUBLIC
+        )
 
     def pin_source_content(self) -> bytes:
         if self.qattr is not None and self.qattr.pin_source is not None:
             return (Path(self.qattr.pin_source).read_text() + "\n").encode()
         return b""
+
+    def provides_pin(self) -> bool:
+        return self.qattr is not None and (
+            self.qattr.pin_source is not None or self.qattr.pin_value is not None
+        )
 
     def __str__(self):
         path = self._format_attrs()
@@ -256,8 +277,7 @@ class MultiprocessingCertCache(CertCache):
 
 @dataclass
 class Pkcs11Object:
-    uri: str
-    objclass: str
+    uri: Pkcs11Uri
     label: str
     id: str
     key_type: str | None = None
@@ -310,8 +330,8 @@ def pkcs11_list_objects(token_uri: Pkcs11Uri) -> Iterator[Pkcs11Object]:
 
     def flush() -> Iterator[Pkcs11Object]:
         if attrs:
-            attrs["objclass"] = attrs.pop("class")
-            yield Pkcs11Object(**attrs)
+            uri = Pkcs11Uri.try_parse(attrs.pop("uri"))
+            yield Pkcs11Object(uri=uri, **attrs)
             attrs.clear()
 
     for line in objects.splitlines():
@@ -322,19 +342,14 @@ def pkcs11_list_objects(token_uri: Pkcs11Uri) -> Iterator[Pkcs11Object]:
         v = v.strip()
         if k == "Object":
             yield from flush()
-        elif k in ("uri", "class", "key-type", "label", "id"):
+        elif k in ("uri", "key-type", "label", "id"):
             attrs[k.replace("-", "_")] = v
     yield from flush()
 
 
 def pkcs11_object_exists(uri: Pkcs11Uri) -> bool:
     assert uri.object is not None
-    key_id = uri.object.encode()
-    scope_uri = replace(uri, object=None, id=None)
-    return any(
-        obj.label == uri.object or bytes.fromhex(obj.id.replace(":", "")) == key_id
-        for obj in pkcs11_list_objects(scope_uri)
-    )
+    return any(True for _ in pkcs11_list_objects(uri))
 
 
 def pkcs11_generate_keypair(token_uri: Pkcs11Uri, key_id: str, key_properties: KeyProperties):
@@ -354,7 +369,7 @@ def pkcs11_generate_keypair(token_uri: Pkcs11Uri, key_id: str, key_properties: K
                     if key_properties.key_type == KeyType.RSA
                     else ["--curve", str(key_properties.curve)]
                 ),
-                "--login",
+                *(["--login"] if token_uri.provides_pin() else []),
                 str(token_uri),
             ],
             input=token_uri.pin_source_content(),
@@ -378,7 +393,7 @@ def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
                 f"--file={pem_file}",
                 "--label",
                 key_id,
-                "--login",
+                *(["--login"] if token_uri.provides_pin() else []),
                 str(token_uri),
             ],
             input=token_uri.pin_source_content(),
@@ -395,7 +410,7 @@ def pkcs11_import_object(token_uri: Pkcs11Uri, pem_file: Path, key_id: str):
 
 def pkcs11_delete_object(uri: Pkcs11Uri) -> None:
     result = subprocess.run(
-        ["p11-kit", "delete-object", "--login", str(uri)],
+        ["p11-kit", "delete-object", *(["--login"] if uri.provides_pin() else []), str(uri)],
         input=uri.pin_source_content(),
         capture_output=True,
         check=False,
@@ -405,15 +420,20 @@ def pkcs11_delete_object(uri: Pkcs11Uri) -> None:
         raise OpensighubError(f"Failed to delete object '{uri}': {result.stderr.decode().strip()}")
 
 
-def pkcs11_delete_key(key_uri: Pkcs11Uri):
-    found = False
-    for obj_type in ("private", "public", "cert"):
-        obj_uri = replace(key_uri, type=obj_type)
-        if pkcs11_object_exists(obj_uri):
-            found = True
-            pkcs11_delete_object(obj_uri)
-    if not found:
+def pkcs11_delete_key_and_cert(key_uri: Pkcs11Uri) -> set[Pkcs11ObjectType]:
+    """Delete certificate, public and private key of a key if present, and return the
+    deleted types."""
+    assert key_uri.object is not None
+    order = (Pkcs11ObjectType.CERT, Pkcs11ObjectType.PUBLIC, Pkcs11ObjectType.PRIVATE)
+    present = set(order) & {
+        obj.uri.type for obj in pkcs11_list_objects(replace(key_uri, type=None))
+    }
+    if not present:
         raise OpensighubError(f"No objects for key '{key_uri}' found on token")
+    for obj_type in order:
+        if obj_type in present:
+            pkcs11_delete_object(replace(key_uri, type=obj_type))
+    return present
 
 
 def x509_generate_self_signed_cert(
@@ -515,7 +535,7 @@ def key_status(pkcs11_uri: str | None) -> KeyStatus:
 
 
 def pkcs11_pubkey_hash(uri: Pkcs11Uri) -> str:
-    pubkey_uri = replace(uri, type="public")
+    pubkey_uri = replace(uri, type=Pkcs11ObjectType.PUBLIC)
     try:
         result = subprocess.run(
             [

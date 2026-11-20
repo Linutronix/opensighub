@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -29,20 +30,26 @@ from opensighub.util import CertCache, OpensighubError, Pkcs11Uri, raise_if_tool
 logger = logging.getLogger("opensighub")
 
 
-def confirm_overwrite(path: Path | str, force_overwrite: bool) -> None:
-    if force_overwrite:
+def confirm_yn(question: str, refusal: str, force: bool) -> None:
+    """Ask a y/n question on a terminal unless forced. Without a terminal, refuse."""
+    if force:
         return
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        raise OpensighubError(
-            f"Not overwriting '{path}' in non-interactive mode. Pass different --output "
-            "or -y/--yes."
-        )
-    try:
-        answer = input(f"opensighub: overwrite '{path}' (y/n)? ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() != "y":
-        raise OpensighubError(f"not overwriting '{path}'")
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            answer = input(f"opensighub: {question} (y/n)? ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() == "y":
+            return
+    raise OpensighubError(refusal)
+
+
+def confirm_overwrite(path: Path | str, force_overwrite: bool) -> None:
+    confirm_yn(
+        f"overwrite '{path}'",
+        f"Not overwriting '{path}'. Pass different --output or -y/--yes.",
+        force_overwrite,
+    )
 
 
 @dataclass
@@ -785,6 +792,11 @@ class SignerRegistry:
         job.sign(self)
 
 
+def _worker_init() -> None:
+    # Leave Ctrl-C handling to the main process. It sends SIGTERM to workers.
+    signal.signal(signal.SIGINT, lambda _signum, _frame: None)
+
+
 class SigningPool:
     def __init__(
         self,
@@ -813,5 +825,5 @@ class SigningPool:
     def sign(self, jobs: Sequence[Job]):
         for job in jobs:
             self.registry.preflight(job)
-        with Pool(processes=self.parallel) as p:
+        with Pool(self.parallel, _worker_init) as p:
             p.map(self.registry.sign, jobs)

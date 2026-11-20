@@ -21,11 +21,12 @@ from opensighub.util import (
     KeyProperties,
     KeyType,
     OpensighubError,
+    Pkcs11ObjectType,
     Pkcs11Uri,
     Pkcs11UriQattr,
     Subject,
     key_status,
-    pkcs11_delete_key,
+    pkcs11_delete_key_and_cert,
     pkcs11_delete_object,
     pkcs11_generate_keypair,
     pkcs11_import_object,
@@ -196,11 +197,16 @@ def setup_delkey(config: Config, key_id: str) -> None:
     if signing_key is None or signing_key.pkcs11_uri is None:
         raise OpensighubError(f"No signing key '{key_id}'")
     key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
-    pkcs11_delete_key(key_uri)
+    deleted = pkcs11_delete_key_and_cert(key_uri)
+    from_token = f" from {key_uri.token}" if key_uri.token else ""
+    if Pkcs11ObjectType.CERT in deleted:
+        logger.info(f"Certificate '{key_id}' deleted{from_token}.")
+    if deleted & {Pkcs11ObjectType.PRIVATE, Pkcs11ObjectType.PUBLIC}:
+        logger.info(f"Key '{key_id}' deleted{from_token}.")
 
     config.remove_signing_key(key_id)
     config.save()
-    logger.info(f"Key '{key_id}' deleted from token and removed from {config._source}.")
+    logger.info(f"Key '{key_id}' removed from {config._source}.")
 
 
 def setup_importcert(
@@ -241,7 +247,7 @@ def setup_importcert(
         key_uri = Pkcs11Uri.try_parse(signing_key.pkcs11_uri)
 
     token_uri = Pkcs11Uri(token=key_uri.token, qattr=key_uri.qattr)
-    cert_uri = replace(key_uri, type="cert")
+    cert_uri = replace(key_uri, type=Pkcs11ObjectType.CERT)
     if pkcs11_object_exists(cert_uri):
         confirm_overwrite(
             f"certificate for key '{key_id}' on token '{key_uri.token}'", force_overwrite
