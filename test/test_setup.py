@@ -43,7 +43,7 @@ def test_setup_delkey_key_without_pkcs11_uri_raises(tmp_path, unit_config):
 
 @pytest.mark.integration
 def test_setup_delkey_removes_key_from_token_and_config(
-    softhsm, unit_config, tmp_path, sample_pin_file
+    softhsm, unit_config, tmp_path, sample_pin_file, caplog
 ):
     unit_config._source = tmp_path / "config.yaml"
     setup_genkey(
@@ -55,8 +55,11 @@ def test_setup_delkey_removes_key_from_token_and_config(
     )
     assert "delkey-integration-test" in unit_config.signing_keys
 
-    setup_delkey(unit_config, "delkey-integration-test")
+    with caplog.at_level("INFO", logger="opensighub"):
+        setup_delkey(unit_config, "delkey-integration-test")
     assert "delkey-integration-test" not in unit_config.signing_keys
+    assert "Certificate 'delkey-integration-test' deleted from " in caplog.text
+    assert "Key 'delkey-integration-test' deleted from " in caplog.text
 
     status = get_key_info(
         unit_config, [KeyInfoColumn.STATUS], "acme-2025-uefi"

@@ -9,8 +9,12 @@ import pytest
 from opensighub.util import (
     CertCache,
     KeyProperties,
+    OpensighubError,
+    Pkcs11Object,
+    Pkcs11ObjectType,
     Pkcs11Uri,
     Pkcs11UriQattr,
+    pkcs11_delete_key_and_cert,
     pkcs11_generate_keypair,
 )
 
@@ -173,3 +177,37 @@ def test_cert_from_file(tmp_path):
 def test_pkcs11_login_only_with_pin(subprocess_fake_run, qattr, login):
     pkcs11_generate_keypair(Pkcs11Uri(token="t", qattr=qattr), "k", KeyProperties())
     assert ("--login" in subprocess_fake_run.call_args.args[0]) == login
+
+
+class FakeToken:
+    """Token whose module optionally destroys related objects along with the private key."""
+
+    def __init__(self, cascade: bool):
+        self.cascade = cascade
+        self.objects = set(Pkcs11ObjectType)
+        self.listed = 0
+        self.deleted: list[Pkcs11ObjectType | None] = []
+
+    def list_objects(self, scope):
+        self.listed += 1
+        return [Pkcs11Object(replace(scope, type=t), "k", "6b") for t in self.objects]
+
+    def delete_object(self, uri):
+        if uri.type not in self.objects:
+            raise OpensighubError(f"Failed to delete object '{uri}': no matching object")
+        self.deleted.append(uri.type)
+        self.objects.discard(uri.type)
+        if self.cascade and uri.type == "private":
+            self.objects -= {"public", "cert"}
+
+
+@pytest.mark.parametrize("cascade", [False, True])
+def test_pkcs11_delete_key_and_cert_deletes_private_key_last(monkeypatch, cascade):
+    token = FakeToken(cascade)
+    monkeypatch.setattr("opensighub.util.pkcs11_list_objects", token.list_objects)
+    monkeypatch.setattr("opensighub.util.pkcs11_delete_object", token.delete_object)
+    deleted = pkcs11_delete_key_and_cert(Pkcs11Uri(token="t", object="k"))
+    assert deleted == {"private", "public", "cert"}
+    assert token.deleted == ["cert", "public", "private"]
+    assert token.listed == 1
+    assert token.objects == {"secret-key", "data"}
