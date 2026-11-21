@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 from platformdirs import user_data_path
 
-from opensighub.config import Config, SigningKey
+from opensighub.config import Config, SignerPath, SigningKey
 from opensighub.signers import confirm_overwrite
 from opensighub.util import (
     KeyProperties,
@@ -130,23 +130,13 @@ def setup_local_token(config_path: Path) -> None:
     )
 
 
-class GenKeyUseFor(StrEnum):
-    UEFI = "uefi"
-    SWU = "swu"
-    KERNEL_MODULES = "kernel_modules"
-    HAB4_IMG_KEY = "hab4:img_key"
-    HAB4_CSF_KEY = "hab4:csf_key"
-    OPTEE_TA = "optee_ta"
-    RPI = "rpi"
-
-
 def setup_genkey(
     config: Config,
     key_id: str,
     key_properties: KeyProperties,
     token: str = SOFTHSM_LOCAL_TOKEN_LABEL,
     pin_source: str | None = None,
-    use_for: Sequence[GenKeyUseFor] = (),
+    use_for: Sequence[SignerPath] = (),
 ) -> None:
     raise_if_tool_missing("p11-kit", "openssl")
     if config._source is None:
@@ -183,7 +173,7 @@ def setup_genkey(
 
         config.add_signing_key(key_id, str(key_uri))
         for use in use_for:
-            config.set_key_for_signer(use.split(":"), key_id)
+            config.set_key_for_signer(use, key_id)
     finally:
         config.save()
     logger.info(f"Key '{key_id}' generated and entered in {config._source}.")

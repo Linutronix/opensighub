@@ -3,10 +3,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import logging
-from collections.abc import Sequence
 from dataclasses import InitVar, dataclass, field
+from enum import StrEnum
 from pathlib import Path
-from typing import ClassVar
 
 import yaml
 
@@ -251,17 +250,20 @@ class RawSigningCfg:
         return data
 
 
+class SignerPath(StrEnum):
+    """Signer as named on the command line: path of a key in the signer sections."""
+
+    UEFI = "uefi"
+    SWU = "swu"
+    KERNEL_MODULES = "kernel_modules"
+    HAB4_IMG_KEY = "hab4:img_key"
+    HAB4_CSF_KEY = "hab4:csf_key"
+    OPTEE_TA = "optee_ta"
+    RPI = "rpi"
+
+
 @dataclass
 class Config:
-    _signer_path_length: ClassVar[dict[str, int]] = {
-        "hab4": 2,
-        "optee_ta": 1,
-        "rpi": 1,
-        "uefi": 1,
-        "swu": 1,
-        "kernel_modules": 1,
-    }
-
     archives: dict[str, Archive]
     archive_keyring: Path | None
     log_level: int
@@ -367,49 +369,43 @@ class Config:
     def add_signing_key(self, key_id: str, pkcs11_uri: str) -> None:
         self.signing_keys[key_id] = SigningKey(pkcs11_uri=pkcs11_uri, cfg_id_init=key_id)
 
-    def set_key_for_signer(self, signer_path: Sequence[str], key_id: str) -> None:
+    def set_key_for_signer(self, signer_path: SignerPath, key_id: str) -> None:
         if key_id not in self.signing_keys:
             raise OpensighubError(f"Unknown signing key '{key_id}'")
         key = self.signing_keys[key_id]
-        if not signer_path or self._signer_path_length.get(signer_path[0]) != len(signer_path):
-            raise OpensighubError(f"Unknown signer purpose '{':'.join(signer_path)}'")
-        signer = signer_path[0]
-        if signer == "hab4":
-            if signer_path[1] not in ("img_key", "csf_key"):
-                raise OpensighubError(
-                    "hab4 needs a sub-path, e.g. 'hab4:img_key' or 'hab4:csf_key'"
-                )
-            if self.hab4 is None:
-                self.hab4 = Hab4SigningCfg()
-            if signer_path[1] == "img_key":
-                self.hab4.img_key = key
-            else:
-                self.hab4.csf_key = key
-        elif signer == "optee_ta":
-            if self.optee_ta is None:
-                self.optee_ta = RawSigningCfg(key=key)
-            else:
-                self.optee_ta.key = key
-        elif signer == "rpi":
-            if self.rpi is None:
-                self.rpi = RawSigningCfg(key=key)
-            else:
-                self.rpi.key = key
-        elif signer == "uefi":
-            if self.uefi is None:
-                self.uefi = UefiSigningCfg(key=key)
-            else:
-                self.uefi.key = key
-        elif signer == "swu":
-            if self.swu is None:
-                self.swu = SwuSigningCfg(key=key)
-            else:
-                self.swu.key = key
-        elif signer == "kernel_modules":
-            if self.kernel_modules is None:
-                self.kernel_modules = LinuxModuleSigningCfg(key=key)
-            else:
-                self.kernel_modules.key = key
+        match signer_path:
+            case SignerPath.HAB4_IMG_KEY | SignerPath.HAB4_CSF_KEY:
+                if self.hab4 is None:
+                    self.hab4 = Hab4SigningCfg()
+                if signer_path == SignerPath.HAB4_IMG_KEY:
+                    self.hab4.img_key = key
+                else:
+                    self.hab4.csf_key = key
+            case SignerPath.OPTEE_TA:
+                if self.optee_ta is None:
+                    self.optee_ta = RawSigningCfg(key=key)
+                else:
+                    self.optee_ta.key = key
+            case SignerPath.RPI:
+                if self.rpi is None:
+                    self.rpi = RawSigningCfg(key=key)
+                else:
+                    self.rpi.key = key
+            case SignerPath.UEFI:
+                if self.uefi is None:
+                    self.uefi = UefiSigningCfg(key=key)
+                else:
+                    self.uefi.key = key
+            case SignerPath.SWU:
+                if self.swu is None:
+                    self.swu = SwuSigningCfg(key=key)
+                else:
+                    self.swu.key = key
+            case SignerPath.KERNEL_MODULES:
+                if self.kernel_modules is None:
+                    self.kernel_modules = LinuxModuleSigningCfg(key=key)
+                else:
+                    self.kernel_modules.key = key
 
     def remove_signing_key(self, key_id: str) -> None:
         if key_id not in self.signing_keys:

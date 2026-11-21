@@ -13,6 +13,7 @@ from opensighub.config import (
     LinuxModuleSigningCfg,
     PublicKeyCertificate,
     RawSigningCfg,
+    SignerPath,
     SigningKey,
     SwuSigningCfg,
     UefiSigningCfg,
@@ -173,7 +174,7 @@ def test_register_signing_key(unit_config):
 
 def test_register_key_for_signer_uefi_keeps_variables(unit_config):
     unit_config.add_signing_key("new-key", "pkcs11:token=SoftHSM;object=new-key")
-    unit_config.set_key_for_signer(["uefi"], "new-key")
+    unit_config.set_key_for_signer(SignerPath.UEFI, "new-key")
     assert unit_config.uefi.key == unit_config.signing_keys["new-key"]
     assert "myvar" in unit_config.uefi.variables
 
@@ -192,24 +193,14 @@ def test_register_key_for_signer_hab4_creates_section():
         optee_ta=None,
         rpi=None,
     )
-    config.set_key_for_signer(["hab4", "img_key"], "new-key")
+    config.set_key_for_signer(SignerPath.HAB4_IMG_KEY, "new-key")
     assert config.hab4.img_key == config.signing_keys["new-key"]
     assert config.hab4.csf_key is None
 
 
-def test_register_key_for_signer_hab4_needs_role(unit_config):
-    with pytest.raises(OpensighubError):
-        unit_config.set_key_for_signer(["hab4"], "acme-2025-hab4-img")
-
-
-def test_register_key_for_signer_unknown_purpose_raises(unit_config):
-    with pytest.raises(OpensighubError):
-        unit_config.set_key_for_signer(["foobar"], "acme-2025-hab4-img")
-
-
 def test_register_key_for_signer_unknown_key_raises(unit_config):
     with pytest.raises(OpensighubError):
-        unit_config.set_key_for_signer(["uefi"], "does-not-exist")
+        unit_config.set_key_for_signer(SignerPath.UEFI, "does-not-exist")
 
 
 def test_remove_signing_key_unknown_key_raises(unit_config):

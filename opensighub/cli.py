@@ -19,7 +19,7 @@ import yaml
 from platformdirs import user_config_path
 
 from opensighub import setup
-from opensighub.config import Config
+from opensighub.config import Config, SignerPath
 from opensighub.debian import DebianSigningJob, DebianSigningProcessor
 from opensighub.signers import (
     Hab4Sign,
@@ -256,7 +256,7 @@ class GenKeyCmd(BaseCmd):
     key_properties: setup.KeyProperties
     token: str
     pin_source: str | None
-    use_for: list[setup.GenKeyUseFor]
+    use_for: list[SignerPath]
 
 
 @dataclass
@@ -558,9 +558,9 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
     )
     genkey_parser.add_argument(
         "--use-for",
-        type=_comma_separated_enum(setup.GenKeyUseFor),
+        type=_comma_separated_enum(SignerPath),
         default=[],
-        help=f"Comma-separated: {', '.join(setup.GenKeyUseFor)}.",
+        help=f"Comma-separated signers to assign the key to: {', '.join(SignerPath)}.",
     )
     delkey_parser = setup_sub_parsers.add_parser(
         "delkey",
