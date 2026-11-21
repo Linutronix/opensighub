@@ -5,6 +5,7 @@
 import argparse
 import logging
 import multiprocessing
+import os
 import signal
 import sys
 from collections.abc import Callable
@@ -19,7 +20,7 @@ import yaml
 from platformdirs import user_config_path
 
 from opensighub import setup
-from opensighub.config import Config, SignerPath
+from opensighub.config import Config, QualifiedSignerPath, SignerPath
 from opensighub.debian import DebianSigningJob, DebianSigningProcessor
 from opensighub.signers import (
     Hab4Sign,
@@ -125,6 +126,13 @@ class BaseCmd:
 @dataclass
 class SigningBaseCmd(BaseCmd):
     parallel: int
+    profile: str | None = field(default=None, kw_only=True)
+
+    @cached_property
+    def config(self) -> Config:
+        config = super().config
+        config.select_profile(self.profile)
+        return config
 
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
@@ -256,7 +264,7 @@ class GenKeyCmd(BaseCmd):
     key_properties: setup.KeyProperties
     token: str
     pin_source: str | None
-    use_for: list[SignerPath]
+    use_for: list[QualifiedSignerPath]
 
 
 @dataclass
@@ -376,6 +384,23 @@ def _comma_separated_enum(enum_cls: type[EnumT]) -> Callable[[str], list[EnumT]]
             ) from e
 
     return parse
+
+
+def _qualified_signer_paths(value: str) -> list[QualifiedSignerPath]:
+    try:
+        return [QualifiedSignerPath.parse(v) for v in value.split(",") if v]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"{e}. Available signers: {', '.join(SignerPath)}") from e
+
+
+def _add_profile_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-P",
+        "--profile",
+        default=os.environ.get("OPENSIGHUB_PROFILE") or None,
+        help="Select a signer profile from the config. Defaults to $OPENSIGHUB_PROFILE, "
+        "otherwise to the default profile, i.e. the signer sections at the top level of the config.",
+    )
 
 
 def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
@@ -504,6 +529,8 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         help="One or more (U)EFI binaries to sign. Paths are absolute, or "
         "relative to the current working directory.",
     )
+    for signing_parser in (debsign_parser, uefi_parser, swu_parser, efibinary_parser):
+        _add_profile_argument(signing_parser)
     setup_parser = sub_parsers.add_parser(
         "setup",
         help="Set up user-local environment for opensighub to help getting started.",
@@ -558,9 +585,11 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
     )
     genkey_parser.add_argument(
         "--use-for",
-        type=_comma_separated_enum(SignerPath),
+        type=_qualified_signer_paths,
         default=[],
-        help=f"Comma-separated signers to assign the key to: {', '.join(SignerPath)}.",
+        help="Comma-separated signers to assign the key to. Available signers: "
+        f"{', '.join(SignerPath)}. The 'profile/signer' form assigns to a specific profile rather "
+        "than the default profile.",
     )
     delkey_parser = setup_sub_parsers.add_parser(
         "delkey",
@@ -724,6 +753,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         outfile = Path(args.output) / Path(args.swu).name
         return SwuSignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
             parallel=args.parallel,
@@ -733,6 +763,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         detached = args.detached
         return EfiBinarySignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=Path(args.output),
             jobs=[
                 UefiSignJob(
@@ -749,6 +780,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
     if args.command == "uefivarsign":
         return UefiVarSignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=Path(args.output),
             jobs=[
                 UefiVariableSignJob(
@@ -762,6 +794,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
     elif args.command == "debsign":
         return DebSignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=Path(args.output),
             jobs=[
                 DebianSigningJob(
@@ -808,6 +841,7 @@ def run_setup(run_config: SetupCmd) -> None:
             run_config.token,
             run_config.pin_source,
             run_config.use_for,
+            assume_yes=run_config.assume_yes,
         )
     elif isinstance(run_config, DelKeyCmd):
         setup.setup_delkey(run_config.config, run_config.key_id)

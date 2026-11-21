@@ -19,6 +19,7 @@ from opensighub.cli import (
     parse_args,
     sign_main,
 )
+from opensighub.config import QualifiedSignerPath, SignerPath
 from opensighub.debian import DebianSigningJob
 from opensighub.signers import UefiSignJob, UefiVariableSignJob
 from opensighub.util import OpensighubError
@@ -205,3 +206,27 @@ def test_main_terminates_workers_on_interrupt(
     assert stderr.endswith("opensighub: interrupted\n")
     assert "Traceback" not in stderr
     wait_for(lambda: not process_group_exists(proc.pid), timeout=2)
+
+
+def test_cli_select_profile(monkeypatch):
+    monkeypatch.delenv("OPENSIGHUB_PROFILE", raising=False)
+    assert parse_args(["swusign", "my.swu"]).profile is None
+    assert parse_args(["swusign", "-P", "product1", "my.swu"]).profile == "product1"
+
+    monkeypatch.setenv("OPENSIGHUB_PROFILE", "product2")
+    assert parse_args(["swusign", "my.swu"]).profile == "product2"
+    assert parse_args(["swusign", "-P", "product1", "my.swu"]).profile == "product1"
+
+
+def test_cli_use_for():
+    run_config = parse_args(["setup", "genkey", "--use-for", "uefi,product1/hab4:csf_key"])
+    assert run_config.use_for == [
+        QualifiedSignerPath(SignerPath.UEFI),
+        QualifiedSignerPath(SignerPath.HAB4_CSF_KEY, "product1"),
+    ]
+
+
+@pytest.mark.parametrize("use_for", ["/uefi", "product1/nope", "nope", "a b/uefi"])
+def test_cli_use_for_invalid(use_for):
+    with pytest.raises(SystemExit):
+        parse_args(["setup", "genkey", "--use-for", use_for])

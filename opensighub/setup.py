@@ -15,8 +15,8 @@ from pathlib import Path
 import yaml
 from platformdirs import user_data_path
 
-from opensighub.config import Config, SignerPath, SigningKey
-from opensighub.signers import confirm_overwrite
+from opensighub.config import Config, QualifiedSignerPath, SigningKey
+from opensighub.signers import confirm_overwrite, confirm_yn
 from opensighub.util import (
     KeyProperties,
     KeyType,
@@ -136,7 +136,8 @@ def setup_genkey(
     key_properties: KeyProperties,
     token: str = SOFTHSM_LOCAL_TOKEN_LABEL,
     pin_source: str | None = None,
-    use_for: Sequence[SignerPath] = (),
+    use_for: Sequence[QualifiedSignerPath] = (),
+    assume_yes: bool = False,
 ) -> None:
     raise_if_tool_missing("p11-kit", "openssl")
     if config._source is None:
@@ -145,6 +146,14 @@ def setup_genkey(
         raise OpensighubError("Key length missing for RSA key")
     if key_properties.key_type == KeyType.ECDSA and not key_properties.curve:
         raise OpensighubError("Curve missing for EC key")
+    for use in use_for:
+        if use.profile is not None and use.profile not in config.profiles:
+            confirm_yn(
+                f"profile '{use.profile}' does not exist in '{config._source}', create it",
+                f"Profile '{use.profile}' does not exist. Pass -y/--yes to create it automatically.",
+                assume_yes,
+            )
+            config.add_profile(use.profile)
     is_local = token == SOFTHSM_LOCAL_TOKEN_LABEL
     _data_dir, _softhsm2_conf, _softhsm2_token, local_pin_file = _opensighub_paths(config._source)
     if is_local and pin_source is None:

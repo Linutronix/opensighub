@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import logging
+import re
 from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -262,46 +263,62 @@ class SignerPath(StrEnum):
     RPI = "rpi"
 
 
-@dataclass
-class Config:
-    archives: dict[str, Archive]
-    archive_keyring: Path | None
-    log_level: int
-    signing_keys: dict[str, SigningKey]
-    trusted_certificates: dict[str, PublicKeyCertificate]
-    uefi: UefiSigningCfg | None
-    swu: SwuSigningCfg | None
-    kernel_modules: LinuxModuleSigningCfg | None
-    hab4: Hab4SigningCfg | None
-    optee_ta: RawSigningCfg | None
-    rpi: RawSigningCfg | None
-    _source: Path | None = field(default=None, compare=False, repr=False)
+PROFILE_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def check_profile_name(name: str) -> None:
+    if not PROFILE_NAME_PATTERN.fullmatch(name):
+        raise ValueError(
+            f"profile name '{name}' may only contain letters, digits, '_', '.' and '-'"
+        )
+
+
+@dataclass(frozen=True)
+class QualifiedSignerPath:
+    """A signer, optionally of a profile: 'signer' refers to the top level, 'profile/signer'
+    to a profile."""
+
+    path: SignerPath
+    profile: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict, source: Path | None = None):
+    def parse(cls, value: str) -> "QualifiedSignerPath":
+        profile, sep, path = value.rpartition("/")
         try:
-            return cls._create_from_dict(data, source)
-        except KeyError as e:
-            location = f" in {source}" if source else ""
-            raise OpensighubError(f"Config entry {e} missing or unknown{location}") from e
+            signer_path = SignerPath(path)
+        except ValueError:
+            raise ValueError(f"unknown signer '{path}'") from None
+        if not sep:
+            return cls(signer_path)
+        check_profile_name(profile)
+        return cls(signer_path, profile)
+
+    def __str__(self) -> str:
+        return f"{self.profile}/{self.path}" if self.profile else str(self.path)
+
+
+@dataclass
+class SignerProfile:
+    """Signer configuration for one product, selecting keys from the shared key pool.
+
+    Associated data can appear at top level (default profile), or below 'profiles:'.
+    Config.active_profile selects the current profile view.
+    """
+
+    uefi: UefiSigningCfg | None = None
+    swu: SwuSigningCfg | None = None
+    kernel_modules: LinuxModuleSigningCfg | None = None
+    hab4: Hab4SigningCfg | None = None
+    optee_ta: RawSigningCfg | None = None
+    rpi: RawSigningCfg | None = None
 
     @classmethod
-    def _create_from_dict(cls, data: dict, source: Path | None):
-        if (log_level_str := data.get("log-level")) is not None:
-            log_level = logging.getLevelNamesMapping().get(log_level_str)
-            if not log_level:
-                logger.warning("unknown log level in config, setting to INFO")
-                log_level = logging.INFO
-        else:
-            log_level = logging.INFO
-        archives = {k: Archive.from_dict(v) for k, v in (data.get("archives") or {}).items()}
-        signing_keys = {
-            sk: SigningKey.from_dict(sk, sv) for sk, sv in (data.get("signing-keys") or {}).items()
-        }
-        trusted_certificates = {
-            k: PublicKeyCertificate.from_dict(k, v)
-            for k, v in (data.get("trusted-certificates") or {}).items()
-        }
+    def from_dict(
+        cls,
+        data: dict,
+        signing_keys: dict[str, SigningKey],
+        trusted_certificates: dict[str, PublicKeyCertificate],
+    ):
         uefi_cfg = UefiSigningCfg.from_dict(data["uefi"], signing_keys) if "uefi" in data else None
         swu_cfg = SwuSigningCfg.from_dict(data["swu"], signing_keys) if "swu" in data else None
         kernel_modules_cfg = (
@@ -319,33 +336,16 @@ class Config:
         )
         rpi_cfg = RawSigningCfg.from_dict(data["rpi"], signing_keys) if "rpi" in data else None
         return cls(
-            archives=archives,
-            archive_keyring=Path(data["archive-keyring"]) if "archive-keyring" in data else None,
-            log_level=log_level,
-            signing_keys=signing_keys,
-            trusted_certificates=trusted_certificates,
             uefi=uefi_cfg,
             swu=swu_cfg,
             kernel_modules=kernel_modules_cfg,
             hab4=hab4_cfg,
             optee_ta=optee_ta_cfg,
             rpi=rpi_cfg,
-            _source=source,
         )
 
     def to_dict(self) -> dict:
-        data: dict = {
-            "log-level": logging.getLevelName(self.log_level),
-            "signing-keys": {kid: key.to_dict() for kid, key in self.signing_keys.items()},
-        }
-        if self.archives:
-            data["archives"] = {name: a.to_dict() for name, a in self.archives.items()}
-        if self.archive_keyring is not None:
-            data["archive-keyring"] = str(self.archive_keyring)
-        if self.trusted_certificates:
-            data["trusted-certificates"] = {
-                cid: cert.to_dict() for cid, cert in self.trusted_certificates.items()
-            }
+        data: dict = {}
         if self.uefi:
             data["uefi"] = self.uefi.to_dict()
         if self.swu:
@@ -360,19 +360,7 @@ class Config:
             data["rpi"] = self.rpi.to_dict()
         return data
 
-    def save(self) -> None:
-        if self._source is None:
-            raise OpensighubError("Config has no source path to save to")
-        self._source.parent.mkdir(parents=True, exist_ok=True)
-        self._source.write_text(yaml.safe_dump(self.to_dict(), sort_keys=False))
-
-    def add_signing_key(self, key_id: str, pkcs11_uri: str) -> None:
-        self.signing_keys[key_id] = SigningKey(pkcs11_uri=pkcs11_uri, cfg_id_init=key_id)
-
-    def set_key_for_signer(self, signer_path: SignerPath, key_id: str) -> None:
-        if key_id not in self.signing_keys:
-            raise OpensighubError(f"Unknown signing key '{key_id}'")
-        key = self.signing_keys[key_id]
+    def set_key_for_signer(self, signer_path: SignerPath, key: SigningKey) -> None:
         match signer_path:
             case SignerPath.HAB4_IMG_KEY | SignerPath.HAB4_CSF_KEY:
                 if self.hab4 is None:
@@ -408,8 +396,6 @@ class Config:
                     self.kernel_modules.key = key
 
     def remove_signing_key(self, key_id: str) -> None:
-        if key_id not in self.signing_keys:
-            raise OpensighubError(f"Unknown signing key '{key_id}'")
         if self.uefi is not None:
             if self.uefi.key.cfg_id == key_id:
                 self.uefi = None
@@ -432,4 +418,151 @@ class Config:
                 self.hab4.img_key = None
             if self.hab4.csf_key is not None and self.hab4.csf_key.cfg_id == key_id:
                 self.hab4.csf_key = None
+
+
+@dataclass
+class Config:
+    """Keys and certificates shared by all profiles, plus the signer profiles.
+
+    Signer sections at top level form the default profile, those below 'profiles:'
+    named ones. The signer properties refer to the active profile.
+    """
+
+    archives: dict[str, Archive]
+    archive_keyring: Path | None
+    log_level: int
+    signing_keys: dict[str, SigningKey]
+    trusted_certificates: dict[str, PublicKeyCertificate]
+    default_profile: SignerProfile = field(default_factory=SignerProfile)
+    profiles: dict[str, SignerProfile] = field(default_factory=dict)
+    active_profile: str | None = field(default=None, compare=False)
+    _source: Path | None = field(default=None, compare=False, repr=False)
+
+    @classmethod
+    def from_dict(cls, data: dict, source: Path | None = None):
+        location = f" in {source}" if source else ""
+        try:
+            config = cls._create_from_dict(data, source)
+        except KeyError as e:
+            raise OpensighubError(f"Config entry {e} missing or unknown{location}") from e
+        except ValueError as e:
+            raise OpensighubError(f"Invalid config{location}: {e}") from e
+        return config
+
+    @classmethod
+    def _create_from_dict(cls, data: dict, source: Path | None):
+        if (log_level_str := data.get("log-level")) is not None:
+            log_level = logging.getLevelNamesMapping().get(log_level_str)
+            if not log_level:
+                logger.warning("unknown log level in config, setting to INFO")
+                log_level = logging.INFO
+        else:
+            log_level = logging.INFO
+        archives = {k: Archive.from_dict(v) for k, v in (data.get("archives") or {}).items()}
+        signing_keys = {
+            sk: SigningKey.from_dict(sk, sv) for sk, sv in (data.get("signing-keys") or {}).items()
+        }
+        trusted_certificates = {
+            k: PublicKeyCertificate.from_dict(k, v)
+            for k, v in (data.get("trusted-certificates") or {}).items()
+        }
+        profiles_data = data.get("profiles") or {}
+        for name in profiles_data:
+            check_profile_name(name)
+        return cls(
+            archives=archives,
+            archive_keyring=Path(data["archive-keyring"]) if "archive-keyring" in data else None,
+            log_level=log_level,
+            signing_keys=signing_keys,
+            trusted_certificates=trusted_certificates,
+            default_profile=SignerProfile.from_dict(data, signing_keys, trusted_certificates),
+            profiles={
+                name: SignerProfile.from_dict(p or {}, signing_keys, trusted_certificates)
+                for name, p in profiles_data.items()
+            },
+            _source=source,
+        )
+
+    def to_dict(self) -> dict:
+        data: dict = {
+            "log-level": logging.getLevelName(self.log_level),
+            "signing-keys": {kid: key.to_dict() for kid, key in self.signing_keys.items()},
+        }
+        if self.archives:
+            data["archives"] = {name: a.to_dict() for name, a in self.archives.items()}
+        if self.archive_keyring is not None:
+            data["archive-keyring"] = str(self.archive_keyring)
+        if self.trusted_certificates:
+            data["trusted-certificates"] = {
+                cid: cert.to_dict() for cid, cert in self.trusted_certificates.items()
+            }
+        data.update(self.default_profile.to_dict())
+        if self.profiles:
+            data["profiles"] = {name: p.to_dict() for name, p in self.profiles.items()}
+        return data
+
+    def signer_profile(self, name: str | None) -> SignerProfile:
+        """Return the named profile, or the default profile for None."""
+        if name is None:
+            return self.default_profile
+        if name not in self.profiles:
+            location = f" in {self._source}" if self._source else ""
+            raise OpensighubError(f"Profile '{name}' not defined{location}")
+        return self.profiles[name]
+
+    def add_profile(self, name: str) -> None:
+        self.profiles.setdefault(name, SignerProfile())
+
+    def select_profile(self, name: str | None) -> None:
+        self.signer_profile(name)
+        self.active_profile = name
+
+    @property
+    def profile(self) -> SignerProfile:
+        return self.signer_profile(self.active_profile)
+
+    @property
+    def uefi(self) -> UefiSigningCfg | None:
+        return self.profile.uefi
+
+    @property
+    def swu(self) -> SwuSigningCfg | None:
+        return self.profile.swu
+
+    @property
+    def kernel_modules(self) -> LinuxModuleSigningCfg | None:
+        return self.profile.kernel_modules
+
+    @property
+    def hab4(self) -> Hab4SigningCfg | None:
+        return self.profile.hab4
+
+    @property
+    def optee_ta(self) -> RawSigningCfg | None:
+        return self.profile.optee_ta
+
+    @property
+    def rpi(self) -> RawSigningCfg | None:
+        return self.profile.rpi
+
+    def save(self) -> None:
+        if self._source is None:
+            raise OpensighubError("Config has no source path to save to")
+        self._source.parent.mkdir(parents=True, exist_ok=True)
+        self._source.write_text(yaml.safe_dump(self.to_dict(), sort_keys=False))
+
+    def add_signing_key(self, key_id: str, pkcs11_uri: str) -> None:
+        self.signing_keys[key_id] = SigningKey(pkcs11_uri=pkcs11_uri, cfg_id_init=key_id)
+
+    def set_key_for_signer(self, signer: QualifiedSignerPath, key_id: str) -> None:
+        if key_id not in self.signing_keys:
+            raise OpensighubError(f"Unknown signing key '{key_id}'")
+        profile = self.signer_profile(signer.profile)
+        profile.set_key_for_signer(signer.path, self.signing_keys[key_id])
+
+    def remove_signing_key(self, key_id: str) -> None:
+        if key_id not in self.signing_keys:
+            raise OpensighubError(f"Unknown signing key '{key_id}'")
+        for profile in (self.default_profile, *self.profiles.values()):
+            profile.remove_signing_key(key_id)
         del self.signing_keys[key_id]

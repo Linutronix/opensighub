@@ -12,8 +12,10 @@ from opensighub.config import (
     Hab4SigningCfg,
     LinuxModuleSigningCfg,
     PublicKeyCertificate,
+    QualifiedSignerPath,
     RawSigningCfg,
     SignerPath,
+    SignerProfile,
     SigningKey,
     SwuSigningCfg,
     UefiSigningCfg,
@@ -73,58 +75,64 @@ def test_config(unit_config_yaml, sample_pin_file, repo_pubkey_file):
                 pkcs11_uri="pkcs11:token=SoftHSM;object=habSRK2CA;type=cert"
             ),
         },
-        uefi=UefiSigningCfg(
-            key=SigningKey(
-                pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
+        default_profile=SignerProfile(
+            uefi=UefiSigningCfg(
+                key=SigningKey(
+                    pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
+                ),
+                variables={
+                    "myvar": UefiVariableCfg(
+                        key=SigningKey(
+                            pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
+                        ),
+                        attributes=["BOOTSERVICE_ACCESS", "NON_VOLATILE"],
+                        guid="5feb76ef-8320-47b1-ba80-1e23b8a25286",
+                    )
+                },
             ),
-            variables={
-                "myvar": UefiVariableCfg(
-                    key=SigningKey(
-                        pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
+            kernel_modules=LinuxModuleSigningCfg(
+                key=SigningKey(
+                    pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
+                ),
+            ),
+            hab4=Hab4SigningCfg(
+                img_key=SigningKey(
+                    pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
+                ),
+                csf_key=SigningKey(
+                    pkcs11_uri=f"pkcs11:token=SoftHSM;object=habCSF11?pin-source={sample_pin_file}"
+                ),
+                srk_certificates=[
+                    PublicKeyCertificate(
+                        pkcs11_uri="pkcs11:token=SoftHSM;object=habSRK1CA;type=cert"
                     ),
-                    attributes=["BOOTSERVICE_ACCESS", "NON_VOLATILE"],
-                    guid="5feb76ef-8320-47b1-ba80-1e23b8a25286",
+                    PublicKeyCertificate(
+                        pkcs11_uri="pkcs11:token=SoftHSM;object=habSRK2CA;type=cert"
+                    ),
+                ],
+                srk_index=1,
+            ),
+            optee_ta=RawSigningCfg(
+                key=SigningKey(
+                    pkcs11_uri=f"pkcs11:token=SoftHSM;object=ta-root-key?pin-source={sample_pin_file}"
+                ),
+                alg_hash="sha256",
+                padding="pss",
+                salt_len="digest",
+            ),
+            rpi=RawSigningCfg(
+                key=SigningKey(
+                    pkcs11_uri=f"pkcs11:token=SoftHSM;object=rpi-boot-key?pin-source={sample_pin_file}"
+                ),
+                alg_hash="sha256",
+                padding="pkcs1",
+                salt_len=None,
+            ),
+            swu=SwuSigningCfg(
+                key=SigningKey(
+                    pkcs11_uri=f"pkcs11:token=SoftHSM;object=SWU?pin-source={sample_pin_file}"
                 )
-            },
-        ),
-        kernel_modules=LinuxModuleSigningCfg(
-            key=SigningKey(
-                pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
             ),
-        ),
-        hab4=Hab4SigningCfg(
-            img_key=SigningKey(
-                pkcs11_uri=f"pkcs11:token=SoftHSM;object=habIMG11?pin-source={sample_pin_file}"
-            ),
-            csf_key=SigningKey(
-                pkcs11_uri=f"pkcs11:token=SoftHSM;object=habCSF11?pin-source={sample_pin_file}"
-            ),
-            srk_certificates=[
-                PublicKeyCertificate(pkcs11_uri="pkcs11:token=SoftHSM;object=habSRK1CA;type=cert"),
-                PublicKeyCertificate(pkcs11_uri="pkcs11:token=SoftHSM;object=habSRK2CA;type=cert"),
-            ],
-            srk_index=1,
-        ),
-        optee_ta=RawSigningCfg(
-            key=SigningKey(
-                pkcs11_uri=f"pkcs11:token=SoftHSM;object=ta-root-key?pin-source={sample_pin_file}"
-            ),
-            alg_hash="sha256",
-            padding="pss",
-            salt_len="digest",
-        ),
-        rpi=RawSigningCfg(
-            key=SigningKey(
-                pkcs11_uri=f"pkcs11:token=SoftHSM;object=rpi-boot-key?pin-source={sample_pin_file}"
-            ),
-            alg_hash="sha256",
-            padding="pkcs1",
-            salt_len=None,
-        ),
-        swu=SwuSigningCfg(
-            key=SigningKey(
-                pkcs11_uri=f"pkcs11:token=SoftHSM;object=SWU?pin-source={sample_pin_file}"
-            )
         ),
     )
 
@@ -174,7 +182,7 @@ def test_register_signing_key(unit_config):
 
 def test_register_key_for_signer_uefi_keeps_variables(unit_config):
     unit_config.add_signing_key("new-key", "pkcs11:token=SoftHSM;object=new-key")
-    unit_config.set_key_for_signer(SignerPath.UEFI, "new-key")
+    unit_config.set_key_for_signer(QualifiedSignerPath(SignerPath.UEFI), "new-key")
     assert unit_config.uefi.key == unit_config.signing_keys["new-key"]
     assert "myvar" in unit_config.uefi.variables
 
@@ -186,21 +194,15 @@ def test_register_key_for_signer_hab4_creates_section():
         log_level=10,
         signing_keys={"new-key": SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=new-key")},
         trusted_certificates={},
-        uefi=None,
-        swu=None,
-        kernel_modules=None,
-        hab4=None,
-        optee_ta=None,
-        rpi=None,
     )
-    config.set_key_for_signer(SignerPath.HAB4_IMG_KEY, "new-key")
+    config.set_key_for_signer(QualifiedSignerPath(SignerPath.HAB4_IMG_KEY), "new-key")
     assert config.hab4.img_key == config.signing_keys["new-key"]
     assert config.hab4.csf_key is None
 
 
 def test_register_key_for_signer_unknown_key_raises(unit_config):
     with pytest.raises(OpensighubError):
-        unit_config.set_key_for_signer(SignerPath.UEFI, "does-not-exist")
+        unit_config.set_key_for_signer(QualifiedSignerPath(SignerPath.UEFI), "does-not-exist")
 
 
 def test_remove_signing_key_unknown_key_raises(unit_config):
@@ -232,15 +234,9 @@ def test_remove_signing_key_clears_uefi_variable_without_dropping_section():
         log_level=10,
         signing_keys={"main-key": key, "var-key": var_key},
         trusted_certificates={},
-        uefi=UefiSigningCfg(
-            key=key,
-            variables={"myvar": UefiVariableCfg(key=var_key)},
+        default_profile=SignerProfile(
+            uefi=UefiSigningCfg(key=key, variables={"myvar": UefiVariableCfg(key=var_key)})
         ),
-        swu=None,
-        kernel_modules=None,
-        hab4=None,
-        optee_ta=None,
-        rpi=None,
     )
     config.remove_signing_key("var-key")
     assert config.uefi is not None
@@ -261,12 +257,6 @@ def test_config_to_dict_omits_none_sections():
         log_level=20,
         signing_keys={},
         trusted_certificates={},
-        uefi=None,
-        swu=None,
-        kernel_modules=None,
-        hab4=None,
-        optee_ta=None,
-        rpi=None,
     )
     result = config.to_dict()
     for absent in (
@@ -346,3 +336,73 @@ def test_config_create_missing_top_level_fields(data):
 def test_config_missing_key():
     with pytest.raises(OpensighubError, match="'acme-unknown' missing or unknown"):
         Config.from_dict({"signing-keys": {}, "swu": {"key": "acme-unknown"}})
+
+
+@pytest.fixture
+def profiles_config_dict():
+    return {
+        "signing-keys": {
+            "default-key": {"pkcs11_uri": "pkcs11:token=t;object=default-key"},
+            "product1-key": {"pkcs11_uri": "pkcs11:token=t;object=product1-key"},
+        },
+        "uefi": {"key": "default-key"},
+        "profiles": {
+            "product1": {"uefi": {"key": "product1-key"}, "swu": {"key": "product1-key"}},
+            "empty": None,
+        },
+    }
+
+
+def test_config_default_profile_is_top_level(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    assert cfg.uefi.key.cfg_id == "default-key"
+    assert cfg.swu is None
+
+
+def test_config_selects_profile(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    cfg.select_profile("product1")
+    assert cfg.uefi.key.cfg_id == "product1-key"
+    assert cfg.swu.key.cfg_id == "product1-key"
+
+
+def test_config_unknown_profile_raises(profiles_config_dict):
+    with pytest.raises(OpensighubError, match="Profile 'nope' not defined"):
+        Config.from_dict(profiles_config_dict).select_profile("nope")
+
+
+def test_config_profiles_round_trip(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    assert Config.from_dict(cfg.to_dict()) == cfg
+    assert cfg.to_dict()["profiles"]["empty"] == {}
+
+
+def test_set_key_for_signer_writes_given_profile(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    cfg.set_key_for_signer(QualifiedSignerPath(SignerPath.RPI, "empty"), "product1-key")
+    assert cfg.profiles["empty"].rpi.key.cfg_id == "product1-key"
+    assert cfg.default_profile.rpi is None
+    cfg.set_key_for_signer(QualifiedSignerPath(SignerPath.RPI), "default-key")
+    assert cfg.default_profile.rpi.key.cfg_id == "default-key"
+    assert cfg.profiles["empty"].rpi.key.cfg_id == "product1-key"
+
+
+def test_set_key_for_signer_unknown_profile_raises(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    with pytest.raises(OpensighubError, match="Profile 'nope' not defined"):
+        cfg.set_key_for_signer(QualifiedSignerPath(SignerPath.RPI, "nope"), "product1-key")
+
+
+@pytest.mark.parametrize("name", ["a/b", "a,b", "a b", ""])
+def test_config_invalid_profile_name_raises(profiles_config_dict, name):
+    profiles_config_dict["profiles"][name] = None
+    with pytest.raises(OpensighubError, match="profile name"):
+        Config.from_dict(profiles_config_dict)
+
+
+def test_remove_signing_key_clears_all_profiles(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    cfg.remove_signing_key("product1-key")
+    assert cfg.profiles["product1"].uefi is None
+    assert cfg.profiles["product1"].swu is None
+    assert cfg.uefi.key.cfg_id == "default-key"

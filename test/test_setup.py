@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from opensighub.config import SigningKey
+from opensighub.config import QualifiedSignerPath, SigningKey
 from opensighub.setup import (
     ExtendedKeyUsage,
     KeyInfoColumn,
@@ -312,3 +312,38 @@ def test_setup_get_key_info_status_multiple_keys_preserves_order(
         assert row[1] in ("available", "loginrequired", "offline", "invalid")
     uefi_row = next(row for row in key_info if row[0] == "acme-2025-uefi")
     assert uefi_row[1] == "available"
+
+
+def test_setup_new_profile_needs_confirmation(tmp_path, unit_config, monkeypatch):
+    monkeypatch.setattr("opensighub.setup.pkcs11_generate_keypair", None)
+    unit_config._source = tmp_path / "config.yaml"
+    with pytest.raises(OpensighubError, match="Profile 'product1' does not exist"):
+        setup_genkey(
+            unit_config,
+            "k",
+            KeyProperties(),
+            token="SoftHSM",
+            pin_source="/dev/null",
+            use_for=[QualifiedSignerPath.parse("product1/uefi")],
+        )
+    assert "product1" not in unit_config.profiles
+
+
+@pytest.mark.integration
+def test_setup_genkey_creates_profile_with_yes(softhsm, unit_config, tmp_path, sample_pin_file):
+    unit_config._source = tmp_path / "config.yaml"
+    setup_genkey(
+        unit_config,
+        "product1-uefi",
+        KeyProperties(),
+        token="SoftHSM",
+        pin_source=str(sample_pin_file),
+        use_for=[
+            QualifiedSignerPath.parse("product1/uefi"),
+            QualifiedSignerPath.parse("product1/swu"),
+        ],
+        assume_yes=True,
+    )
+    assert unit_config.profiles["product1"].uefi.key.cfg_id == "product1-uefi"
+    assert unit_config.profiles["product1"].swu.key.cfg_id == "product1-uefi"
+    assert unit_config.default_profile.uefi.key.cfg_id != "product1-uefi"

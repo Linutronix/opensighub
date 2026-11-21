@@ -183,12 +183,6 @@ def empty_config():
         log_level=20,
         signing_keys={},
         trusted_certificates={},
-        uefi=None,
-        swu=None,
-        kernel_modules=None,
-        hab4=None,
-        optee_ta=None,
-        rpi=None,
     )
 
 
