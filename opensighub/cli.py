@@ -285,13 +285,20 @@ class ListKeysCmd(BaseCmd):
 
 
 @dataclass
+class ListProfilesCmd(BaseCmd):
+    pass
+
+
+@dataclass
 class CsrCmd(BaseCmd):
     key_id: str
     subject: setup.Subject
     purpose: list[setup.ExtendedKeyUsage] | None
 
 
-SetupCmd = SoftHsmCmd | GenKeyCmd | DelKeyCmd | ImportCertCmd | ListKeysCmd | CsrCmd
+SetupCmd = (
+    SoftHsmCmd | GenKeyCmd | DelKeyCmd | ImportCertCmd | ListKeysCmd | ListProfilesCmd | CsrCmd
+)
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
@@ -635,6 +642,11 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         help="Comma-separated list of columns to print, in order. Available: "
         f"{', '.join(setup.KeyInfoColumn)}. Status is one of available/loginrequired/offline/invalid.",
     )
+    setup_sub_parsers.add_parser(
+        "listprofiles",
+        help="List the signer profiles defined in the configuration.",
+        description="Prints one profile per line. The default profile is not printed.",
+    )
     csr_parser = setup_sub_parsers.add_parser(
         "csr",
         help="Generate certificate signing request for a configured signing key.",
@@ -730,6 +742,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             key_id=args.key_id,
             columns=args.columns,
         )
+    if args.command == "setup" and args.setup_command == "listprofiles":
+        return ListProfilesCmd(config_path=Path(args.config), output=Path(args.output))
     if args.command == "setup" and args.setup_command == "csr":
         return CsrCmd(
             config_path=Path(args.config),
@@ -855,6 +869,9 @@ def run_setup(run_config: SetupCmd) -> None:
     elif isinstance(run_config, ListKeysCmd):
         key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
         print("\n".join(" ".join(row) for row in key_info))
+    elif isinstance(run_config, ListProfilesCmd):
+        for name in run_config.config.profiles:
+            print(name)
     elif isinstance(run_config, CsrCmd):
         setup.generate_csr(
             run_config.config,

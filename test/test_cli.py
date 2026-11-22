@@ -15,8 +15,10 @@ from opensighub.cli import (
     DebSignCmd,
     EfiBinarySignCmd,
     GenKeyCmd,
+    ListProfilesCmd,
     UefiVarSignCmd,
     parse_args,
+    run_setup,
     sign_main,
 )
 from opensighub.config import QualifiedSignerPath, SignerPath
@@ -230,3 +232,24 @@ def test_cli_use_for():
 def test_cli_use_for_invalid(use_for):
     with pytest.raises(SystemExit):
         parse_args(["setup", "genkey", "--use-for", use_for])
+
+
+@pytest.fixture
+def profiles_config_file(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "signing-keys:\n"
+        "  k1: {pkcs11_uri: 'pkcs11:token=t;object=k1'}\n"
+        "  k2: {pkcs11_uri: 'pkcs11:token=t;object=k2'}\n"
+        "profiles:\n"
+        "  product1: {uefi: {key: k1}}\n"
+        "  product2:\n"
+    )
+    return config
+
+
+def test_cli_listprofiles(profiles_config_file, capsys):
+    run_config = parse_args(["-c", str(profiles_config_file), "setup", "listprofiles"])
+    assert isinstance(run_config, ListProfilesCmd)
+    run_setup(run_config)
+    assert capsys.readouterr().out == "product1\nproduct2\n"
