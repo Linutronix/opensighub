@@ -42,59 +42,70 @@ from opensighub.util import MultiprocessingCertCache, OpensighubError
 
 DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
-_PROPAGATE_MAIN_OPTIONS_BASH = """
+_COMPLETE_PREAMBLE_BASH = """
 _opensighub_propagate_main_options() {
-  local subcommand="$1" word
+  local word stop
   _opensighub_main_options=()
   for word in "${COMP_WORDS[@]:1}"; do
-    [ "$word" = "$subcommand" ] && break
+    for stop in "$@"; do
+      [ "$word" = "$stop" ] && return
+    done
     _opensighub_main_options+=("$word")
   done
 }
-"""
 
-_PROPAGATE_MAIN_OPTIONS_ZSH = """
-_opensighub_propagate_main_options() {
-  local subcommand="$1" word
-  local -a typed_words
-  typed_words=(${(z)BUFFER})
-  _opensighub_main_options=()
-  for word in "${typed_words[@]:1}"; do
-    [ "$word" = "$subcommand" ] && break
-    _opensighub_main_options+=("$word")
-  done
-}
-"""
-
-_LISTKEYS_KEY_ID_COMPLETE_BASH = (
-    _PROPAGATE_MAIN_OPTIONS_BASH
-    + """
 _opensighub_listkeys_key_id_compgen() {
   _opensighub_propagate_main_options setup
   compgen -W "$(opensighub "${_opensighub_main_options[@]}" setup listkeys --columns keyid 2>/dev/null)" -- "$1"
 }
-"""
-)
 
-_LISTKEYS_KEY_ID_COMPLETE_ZSH = (
-    _PROPAGATE_MAIN_OPTIONS_ZSH
-    + """
+_opensighub_profile_compgen() {
+  _opensighub_propagate_main_options debsign efibinarysign swusign uefivarsign
+  compgen -W "$(opensighub "${_opensighub_main_options[@]}" setup listprofiles 2>/dev/null)" -- "$1"
+}
+"""
+
+_COMPLETE_PREAMBLE_ZSH = """
+_opensighub_propagate_main_options() {
+  local word stop
+  local -a typed_words
+  typed_words=(${(z)BUFFER})
+  _opensighub_main_options=()
+  for word in "${typed_words[@]:1}"; do
+    for stop in "$@"; do
+      [ "$word" = "$stop" ] && return
+    done
+    _opensighub_main_options+=("$word")
+  done
+}
+
 _opensighub_listkeys_key_id_candidates() {
   _opensighub_propagate_main_options setup
   local -a keys
   keys=(${(f)"$(opensighub "${_opensighub_main_options[@]}" setup listkeys --columns keyid 2>/dev/null)"})
   compadd -a keys
 }
+
+_opensighub_profile_candidates() {
+  _opensighub_propagate_main_options debsign efibinarysign swusign uefivarsign
+  local -a profiles
+  profiles=(${(f)"$(opensighub "${_opensighub_main_options[@]}" setup listprofiles 2>/dev/null)"})
+  compadd -a profiles
+}
 """
-)
+
+_COMPLETE_PREAMBLE = {"bash": _COMPLETE_PREAMBLE_BASH, "zsh": _COMPLETE_PREAMBLE_ZSH}
 
 _LISTKEYS_KEY_ID_COMPLETE = {
     "bash": "_opensighub_listkeys_key_id_compgen",
     "zsh": "_opensighub_listkeys_key_id_candidates",
-    "preamble": {
-        "bash": _LISTKEYS_KEY_ID_COMPLETE_BASH,
-        "zsh": _LISTKEYS_KEY_ID_COMPLETE_ZSH,
-    },
+    "preamble": _COMPLETE_PREAMBLE,
+}
+
+_PROFILE_COMPLETE = {
+    "bash": "_opensighub_profile_compgen",
+    "zsh": "_opensighub_profile_candidates",
+    "preamble": _COMPLETE_PREAMBLE,
 }
 
 
@@ -412,8 +423,8 @@ def _qualified_signer_paths(value: str) -> list[QualifiedSignerPath]:
     return [_qualified_signer_path(v) for v in value.split(",") if v]
 
 
-def _add_profile_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
+def _add_profile_argument(parser: argparse.ArgumentParser) -> argparse.Action:
+    return parser.add_argument(
         "-P",
         "--profile",
         default=os.environ.get("OPENSIGHUB_PROFILE") or None,
@@ -548,8 +559,10 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         help="One or more (U)EFI binaries to sign. Paths are absolute, or "
         "relative to the current working directory.",
     )
-    for signing_parser in (debsign_parser, uefi_parser, swu_parser, efibinary_parser):
+    profile_args = [
         _add_profile_argument(signing_parser)
+        for signing_parser in (debsign_parser, uefi_parser, swu_parser, efibinary_parser)
+    ]
     setup_parser = sub_parsers.add_parser(
         "setup",
         help="Set up user-local environment for opensighub to help getting started.",
@@ -734,6 +747,8 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         delkey_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
         assign_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
         importcert_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
+        for profile_arg in profile_args:
+            profile_arg.complete = _PROFILE_COMPLETE  # type: ignore[attr-defined]
 
     return parser
 
