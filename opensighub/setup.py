@@ -130,6 +130,28 @@ def setup_local_token(config_path: Path) -> None:
     )
 
 
+def _confirm_assign_key(
+    config: Config, key_id: str, signers: Sequence[QualifiedSignerPath], assume_yes: bool
+) -> None:
+    for signer in signers:
+        if signer.profile is not None and signer.profile not in config.profiles:
+            confirm_yn(
+                f"profile '{signer.profile}' does not exist in '{config._source}', create it",
+                f"Profile '{signer.profile}' does not exist. Pass -y/--yes to create it "
+                "automatically.",
+                assume_yes,
+            )
+            continue
+        current = config.signer_profile(signer.profile).key_for_signer(signer.path)
+        if current is not None and current.cfg_id != key_id:
+            confirm_yn(
+                f"signer '{signer}' uses key '{current.cfg_id}', replace it with '{key_id}'",
+                f"Signer '{signer}' already uses key '{current.cfg_id}'. Pass -y/--yes to "
+                "replace it.",
+                assume_yes,
+            )
+
+
 def setup_genkey(
     config: Config,
     key_id: str,
@@ -146,14 +168,7 @@ def setup_genkey(
         raise OpensighubError("Key length missing for RSA key")
     if key_properties.key_type == KeyType.ECDSA and not key_properties.curve:
         raise OpensighubError("Curve missing for EC key")
-    for use in use_for:
-        if use.profile is not None and use.profile not in config.profiles:
-            confirm_yn(
-                f"profile '{use.profile}' does not exist in '{config._source}', create it",
-                f"Profile '{use.profile}' does not exist. Pass -y/--yes to create it automatically.",
-                assume_yes,
-            )
-            config.add_profile(use.profile)
+    _confirm_assign_key(config, key_id, use_for, assume_yes)
     is_local = token == SOFTHSM_LOCAL_TOKEN_LABEL
     _data_dir, _softhsm2_conf, _softhsm2_token, local_pin_file = _opensighub_paths(config._source)
     if is_local and pin_source is None:
@@ -182,10 +197,42 @@ def setup_genkey(
 
         config.add_signing_key(key_id, str(key_uri))
         for use in use_for:
+            if use.profile is not None and use.profile not in config.profiles:
+                config.add_profile(use.profile)
             config.set_key_for_signer(use, key_id)
     finally:
         config.save()
     logger.info(f"Key '{key_id}' generated and entered in {config._source}.")
+
+
+def setup_assign(
+    config: Config, key_id: str, signers: Sequence[QualifiedSignerPath], assume_yes: bool = False
+) -> None:
+    if config._source is None:
+        raise OpensighubError("Config has no source path to save to")
+    if key_id not in config.signing_keys:
+        raise OpensighubError(f"No signing key '{key_id}'")
+    _confirm_assign_key(config, key_id, signers, assume_yes)
+    for signer in signers:
+        if signer.profile is not None and signer.profile not in config.profiles:
+            config.add_profile(signer.profile)
+        config.set_key_for_signer(signer, key_id)
+    config.save()
+    logger.info(f"Key '{key_id}' assigned to {', '.join(map(str, signers))} in {config._source}.")
+
+
+def setup_unassign(config: Config, signers: Sequence[QualifiedSignerPath]) -> None:
+    if config._source is None:
+        raise OpensighubError("Config has no source path to save to")
+    for signer in signers:
+        profile = config.signer_profile(signer.profile)
+        current = profile.key_for_signer(signer.path)
+        if current is None:
+            logger.info(f"Signer '{signer}' has no key assigned.")
+            continue
+        profile.unassign_signer(signer.path)
+        logger.info(f"Key '{current.cfg_id}' unassigned from signer '{signer}'.")
+    config.save()
 
 
 def setup_delkey(config: Config, key_id: str) -> None:

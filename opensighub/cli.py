@@ -262,6 +262,17 @@ class DelKeyCmd(BaseCmd):
 
 
 @dataclass
+class AssignCmd(BaseCmd):
+    key_id: str
+    signers: list[QualifiedSignerPath]
+
+
+@dataclass
+class UnassignCmd(BaseCmd):
+    signers: list[QualifiedSignerPath]
+
+
+@dataclass
 class ImportCertCmd(BaseCmd):
     cert_path: Path
     key_id: str | None
@@ -286,7 +297,15 @@ class CsrCmd(BaseCmd):
 
 
 SetupCmd = (
-    SoftHsmCmd | GenKeyCmd | DelKeyCmd | ImportCertCmd | ListKeysCmd | ListProfilesCmd | CsrCmd
+    SoftHsmCmd
+    | GenKeyCmd
+    | DelKeyCmd
+    | AssignCmd
+    | UnassignCmd
+    | ImportCertCmd
+    | ListKeysCmd
+    | ListProfilesCmd
+    | CsrCmd
 )
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
@@ -382,11 +401,15 @@ def _comma_separated_enum(enum_cls: type[EnumT]) -> Callable[[str], list[EnumT]]
     return parse
 
 
-def _qualified_signer_paths(value: str) -> list[QualifiedSignerPath]:
+def _qualified_signer_path(value: str) -> QualifiedSignerPath:
     try:
-        return [QualifiedSignerPath.parse(v) for v in value.split(",") if v]
+        return QualifiedSignerPath.parse(value)
     except ValueError as e:
         raise argparse.ArgumentTypeError(f"{e}. Available signers: {', '.join(SignerPath)}") from e
+
+
+def _qualified_signer_paths(value: str) -> list[QualifiedSignerPath]:
+    return [_qualified_signer_path(v) for v in value.split(",") if v]
 
 
 def _add_profile_argument(parser: argparse.ArgumentParser) -> None:
@@ -598,6 +621,37 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         "key_id",
         help="ID of the key in config.yaml's signing-keys section to delete.",
     )
+    assign_parser = setup_sub_parsers.add_parser(
+        "assign",
+        help="Assign a signing key to signers.",
+        description="Only the key of a signer is changed, its other settings stay as they are.",
+    )
+    assign_key_id_arg = assign_parser.add_argument(
+        "key_id",
+        help="ID of the key in config.yaml's signing-keys section to assign.",
+    )
+    assign_parser.add_argument(
+        "signers",
+        nargs="+",
+        type=_qualified_signer_path,
+        metavar="SIGNER",
+        help=f"Signer to assign the key to. Available signers: {', '.join(SignerPath)}. The "
+        "'profile/signer' form assigns to a specific profile rather than the default profile.",
+    )
+    unassign_parser = setup_sub_parsers.add_parser(
+        "unassign",
+        help="Remove the signing key from signers.",
+        description="Only the key of a signer is removed, its other settings stay as they are. "
+        "The key itself stays configured.",
+    )
+    unassign_parser.add_argument(
+        "signers",
+        nargs="+",
+        type=_qualified_signer_path,
+        metavar="SIGNER",
+        help=f"Signer to remove the key from. Available signers: {', '.join(SignerPath)}. The "
+        "'profile/signer' form refers to a specific profile rather than the default profile.",
+    )
     importcert_parser = setup_sub_parsers.add_parser(
         "importcert",
         help="Import a CA-issued certificate for a signing key.",
@@ -678,6 +732,7 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         binaries_arg.complete = shtab.FILE  # type: ignore[attr-defined]
         key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
         delkey_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
+        assign_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
         importcert_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
 
     return parser
@@ -715,6 +770,18 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             config_path=Path(args.config),
             output=Path(args.output),
             key_id=args.key_id,
+        )
+    if args.command == "setup" and args.setup_command == "assign":
+        return AssignCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            signers=args.signers,
+            assume_yes=args.yes,
+        )
+    if args.command == "setup" and args.setup_command == "unassign":
+        return UnassignCmd(
+            config_path=Path(args.config), output=Path(args.output), signers=args.signers
         )
     if args.command == "setup" and args.setup_command == "importcert":
         return ImportCertCmd(
@@ -848,6 +915,12 @@ def run_setup(run_config: SetupCmd) -> None:
         )
     elif isinstance(run_config, DelKeyCmd):
         setup.setup_delkey(run_config.config, run_config.key_id)
+    elif isinstance(run_config, AssignCmd):
+        setup.setup_assign(
+            run_config.config, run_config.key_id, run_config.signers, run_config.assume_yes
+        )
+    elif isinstance(run_config, UnassignCmd):
+        setup.setup_unassign(run_config.config, run_config.signers)
     elif isinstance(run_config, ImportCertCmd):
         setup.setup_importcert(
             run_config.config,

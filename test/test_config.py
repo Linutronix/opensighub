@@ -450,3 +450,13 @@ def test_profile_name(profiles_config_dict):
     assert cfg.profile_name == "default"
     cfg.select_profile("product1")
     assert cfg.profile_name == "product1"
+
+
+def test_unassign_signer(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    cfg.profiles["product1"].unassign_signer(SignerPath.UEFI)
+    cfg.profiles["empty"].unassign_signer(SignerPath.HAB4_IMG_KEY)
+    assert cfg.profiles["product1"].uefi == UefiSigningCfg(key=None)
+    assert cfg.profiles["product1"].swu.key.cfg_id == "product1-key"
+    assert cfg.profiles["empty"] == SignerProfile()
+    assert cfg.uefi.key.cfg_id == "default-key"

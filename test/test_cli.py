@@ -12,11 +12,13 @@ import pytest
 from helpers import wait_for
 
 from opensighub.cli import (
+    AssignCmd,
     DebSignCmd,
     EfiBinarySignCmd,
     GenKeyCmd,
     ListProfilesCmd,
     UefiVarSignCmd,
+    UnassignCmd,
     parse_args,
     run_setup,
     sign_main,
@@ -242,6 +244,27 @@ def test_cli_use_for():
 def test_cli_use_for_invalid(use_for):
     with pytest.raises(SystemExit):
         parse_args(["setup", "genkey", "--use-for", use_for])
+
+
+def test_cli_assign():
+    run_config = parse_args(["-y", "setup", "assign", "k1", "uefi", "product1/hab4:csf_key"])
+    assert isinstance(run_config, AssignCmd)
+    assert run_config.key_id == "k1"
+    assert run_config.assume_yes
+    assert run_config.signers == [
+        QualifiedSignerPath(SignerPath.UEFI),
+        QualifiedSignerPath(SignerPath.HAB4_CSF_KEY, "product1"),
+    ]
+    with pytest.raises(SystemExit):
+        parse_args(["setup", "assign", "k1"])
+
+
+def test_cli_unassign():
+    run_config = parse_args(["setup", "unassign", "product1/uefi"])
+    assert isinstance(run_config, UnassignCmd)
+    assert run_config.signers == [QualifiedSignerPath(SignerPath.UEFI, "product1")]
+    with pytest.raises(SystemExit):
+        parse_args(["setup", "unassign"])
 
 
 @pytest.fixture
