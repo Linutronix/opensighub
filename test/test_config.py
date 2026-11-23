@@ -215,17 +215,19 @@ def test_remove_signing_key_drops_from_signing_keys(unit_config):
     assert "acme-2025-ta-root" not in unit_config.signing_keys
 
 
-def test_remove_signing_key_clears_whole_section_swu(unit_config):
-    unit_config.remove_signing_key("acme-2025-swu")
-    assert unit_config.swu is None
+def test_remove_signing_key_keeps_sections(unit_config):
+    for key_id in ("acme-2025-swu", "acme-2025-uefi", "acme-2025-ta-root"):
+        unit_config.remove_signing_key(key_id)
+    assert unit_config.swu == SwuSigningCfg(key=None)
+    assert unit_config.uefi.key is None
+    assert unit_config.uefi.variables["myvar"].key is None
+    assert unit_config.uefi.variables["myvar"].guid == "5feb76ef-8320-47b1-ba80-1e23b8a25286"
+    assert unit_config.kernel_modules.key is None
+    assert unit_config.optee_ta.key is None
+    assert unit_config.optee_ta.padding == "pss"
 
 
-def test_remove_signing_key_clears_whole_section_uefi(unit_config):
-    unit_config.remove_signing_key("acme-2025-uefi")
-    assert unit_config.uefi is None
-
-
-def test_remove_signing_key_clears_uefi_variable_without_dropping_section():
+def test_remove_signing_key_clears_only_uefi_variable_key():
     key = SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=main", cfg_id_init="main-key")
     var_key = SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=var", cfg_id_init="var-key")
     config = Config(
@@ -239,8 +241,8 @@ def test_remove_signing_key_clears_uefi_variable_without_dropping_section():
         ),
     )
     config.remove_signing_key("var-key")
-    assert config.uefi is not None
-    assert "myvar" not in config.uefi.variables
+    assert config.uefi.key is key
+    assert config.uefi.variables["myvar"] == UefiVariableCfg()
 
 
 def test_remove_signing_key_clears_only_matching_hab4_role(unit_config):
@@ -275,14 +277,16 @@ def test_config_to_dict_omits_none_sections():
 
 def test_hab4_to_dict_partial_img_key_only():
     hab4 = Hab4SigningCfg(
-        img_key=SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=img", cfg_id_init="my-img-key")
+        img_key=SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=img", cfg_id_init="my-img-key"),
+        csf_key=None,
     )
     assert hab4.to_dict() == {"img_key": "my-img-key"}
 
 
 def test_hab4_to_dict_partial_csf_key_only():
     hab4 = Hab4SigningCfg(
-        csf_key=SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=csf", cfg_id_init="my-csf-key")
+        img_key=None,
+        csf_key=SigningKey(pkcs11_uri="pkcs11:token=SoftHSM;object=csf", cfg_id_init="my-csf-key"),
     )
     assert hab4.to_dict() == {"csf_key": "my-csf-key"}
 
@@ -403,6 +407,46 @@ def test_config_invalid_profile_name_raises(profiles_config_dict, name):
 def test_remove_signing_key_clears_all_profiles(profiles_config_dict):
     cfg = Config.from_dict(profiles_config_dict)
     cfg.remove_signing_key("product1-key")
-    assert cfg.profiles["product1"].uefi is None
-    assert cfg.profiles["product1"].swu is None
+    assert cfg.profiles["product1"].uefi == UefiSigningCfg(key=None)
+    assert cfg.profiles["product1"].swu == SwuSigningCfg(key=None)
     assert cfg.uefi.key.cfg_id == "default-key"
+
+
+def test_config_signer_sections_without_key_round_trip():
+    data = {
+        "signing-keys": {"k": {"pkcs11_uri": "pkcs11:token=t;object=k"}},
+        "uefi": {"variables": {"db": {"guid": "d719b2cb-3d3a-4596-a3bc-dad00e67656f"}}},
+        "swu": {},
+        "kernel_modules": None,
+        "rpi": {"hash": "sha256"},
+        "profiles": {"product1": {"uefi": {"key": "k"}}},
+    }
+    cfg = Config.from_dict(data)
+    assert cfg.uefi.key is None
+    assert cfg.uefi.variables["db"].key is None
+    assert cfg.swu.key is None
+    assert cfg.kernel_modules.key is None
+    assert cfg.rpi.key is None
+    out = cfg.to_dict()
+    assert out["uefi"] == {"variables": {"db": {"guid": "d719b2cb-3d3a-4596-a3bc-dad00e67656f"}}}
+    assert out["swu"] == {}
+    assert out["kernel_modules"] == {}
+    assert out["rpi"] == {"hash": "sha256", "padding": "pkcs1"}
+    assert out["profiles"]["product1"] == {"uefi": {"key": "k"}}
+
+
+def test_verified():
+    key = SigningKey(pkcs11_uri="pkcs11:token=t;object=k", cfg_id_init="k")
+    assert SwuSigningCfg(key=None).verified() is None
+    swu = SwuSigningCfg(key=key)
+    assert swu.verified() is swu
+    assert Hab4SigningCfg(img_key=key, csf_key=None).verified() is None
+    verified_hab4 = Hab4SigningCfg(img_key=key, csf_key=key).verified()
+    assert verified_hab4.img_key is key and verified_hab4.csf_key is key
+
+
+def test_profile_name(profiles_config_dict):
+    cfg = Config.from_dict(profiles_config_dict)
+    assert cfg.profile_name == "default"
+    cfg.select_profile("product1")
+    assert cfg.profile_name == "product1"

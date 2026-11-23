@@ -29,7 +29,7 @@ from opensighub.util import CertCache, OpensighubError, Pkcs11Uri
 def test_uefi_sign(softhsm_shared, integration_config, sample_efi_file, tmp_path):
     signature_dest = tmp_path / "signature.pk7"
     with CertCache() as cc:
-        uefi_signer = UefiSign(cc, integration_config.uefi)
+        uefi_signer = UefiSign(cc, integration_config.uefi.verified())
         uefi_signer.sign(sample_efi_file, signature_dest)
         assert signature_dest.is_file()
         subprocess.check_call(
@@ -48,7 +48,7 @@ def test_uefi_sign(softhsm_shared, integration_config, sample_efi_file, tmp_path
 def test_uefi_variable_sign(softhsm_shared, integration_config, sample_blob, tmp_path):
     signature_dest = tmp_path / "myvar.auth"
     with CertCache() as cc:
-        uefi_variable_signer = UefiVariableSign(cc, integration_config.uefi)
+        uefi_variable_signer = UefiVariableSign(cc, integration_config.uefi.verified())
         uefi_variable_signer.sign(sample_blob, signature_dest, "myvar")
         assert signature_dest.is_file()
 
@@ -59,7 +59,7 @@ def test_kernel_module_sign(
 ):
     signature_dest = tmp_path / "signature.pk7"
     with CertCache() as cc:
-        kernel_module_signer = LinuxModuleSign(cc, integration_config.kernel_modules)
+        kernel_module_signer = LinuxModuleSign(cc, integration_config.kernel_modules.verified())
         kernel_module_signer.sign(sample_ko_file, signature_dest)
         assert signature_dest.is_file()
         subprocess.check_call(
@@ -87,7 +87,7 @@ def test_hab4_sign(softhsm_shared, integration_config, sample_hab4csf_file, samp
     path_to_minimal_hab4_bin = sample_blob.parent
     signed_csf_dest = tmp_path / "csf.bin"
     with CertCache() as cc:
-        hab4_signer = Hab4Sign(cc, integration_config.hab4)
+        hab4_signer = Hab4Sign(cc, integration_config.hab4.verified())
         hab4_signer.sign(sample_hab4csf_file, signed_csf_dest, path_to_minimal_hab4_bin)
     assert signed_csf_dest.is_file()
     parser_stdout = subprocess.check_output(["hab_csf_parser", "-c", signed_csf_dest])
@@ -105,13 +105,15 @@ def test_hab4_sign(softhsm_shared, integration_config, sample_hab4csf_file, samp
     )
 
 
-def test_hab4_sign_preflight_requires_complete_config():
+def test_hab4_sign_preflight_requires_srk_index(unit_config):
     job = Hab4SignJob(
         csf_txt_in_path=Path("in.txt"), csf_bin_out_path=Path("out.bin"), auth_data_prefix=Path("/")
     )
+    img_key = unit_config.signing_keys["acme-2025-hab4-img"]
+    csf_key = unit_config.signing_keys["acme-2025-hab4-csf"]
     with CertCache() as cc:
-        hab4_signer = Hab4Sign(cc, Hab4SigningCfg())
-        with pytest.raises(OpensighubError, match="img_key, csf_key, and srk_index"):
+        hab4_signer = Hab4Sign(cc, Hab4SigningCfg(img_key=img_key, csf_key=csf_key).verified())
+        with pytest.raises(OpensighubError, match="srk_index"):
             hab4_signer.preflight(job)
 
 
@@ -119,7 +121,7 @@ def test_raw_sign_preflight_requires_hash(unit_config):
     job = RawSignJob(artifact=Path("in.bin"), signed_artifact=Path("out.bin"))
     key = unit_config.signing_keys["acme-2025-ta-root"]
     with CertCache() as cc:
-        raw_signer = RpiSign(cc, RawSigningCfg(key=key))
+        raw_signer = RpiSign(cc, RawSigningCfg(key=key).verified())
         with pytest.raises(OpensighubError, match="'hash' configured"):
             raw_signer.preflight(job)
 
@@ -150,7 +152,7 @@ def test_optee_ta_sign(softhsm_shared, integration_config, sample_ta_file, sign_
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
         ver = 1
-        optee_ta_signer = OpteeTaSign(cc, integration_config.optee_ta)
+        optee_ta_signer = OpteeTaSign(cc, integration_config.optee_ta.verified())
         optee_ta_signer.sign(sample_ta_file, signature_dest, ver)
         assert signature_dest.is_file()
         out_ta = tmp_path / "test.ta"
@@ -187,7 +189,7 @@ def test_rpi_boot_sign(
 ):
     signature_dest = tmp_path / "signature.bin"
     with CertCache() as cc:
-        rpi_signer = RpiSign(cc, integration_config.rpi)
+        rpi_signer = RpiSign(cc, integration_config.rpi.verified())
         rpi_signer.sign(sample_rpi_boot_file, signature_dest)
         assert signature_dest.is_file()
 
@@ -216,7 +218,7 @@ def test_rpi_eeprom_sign(
     version = 0
     keynum = 16
     with CertCache() as cc:
-        rpi_eeprom_signer = RpiEepromSign(cc, integration_config.rpi)
+        rpi_eeprom_signer = RpiEepromSign(cc, integration_config.rpi.verified())
         rpi_eeprom_signer.sign(sample_rpi_eeprom_file, signature_dest, version, keynum)
         assert signature_dest.is_file()
 
@@ -268,6 +270,6 @@ def test_rpi_eeprom_sign(
 def test_swu_sign(softhsm_shared, integration_config, swu_file, tmp_path):
     sig_dest = tmp_path / "sign.swu"
     with CertCache() as cc:
-        swu_signer = SwuSign(cc, integration_config.swu)
+        swu_signer = SwuSign(cc, integration_config.swu.verified())
         swu_signer.sign(swu_file, sig_dest)
         assert sig_dest.is_file()

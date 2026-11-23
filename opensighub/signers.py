@@ -22,6 +22,7 @@ from opensighub.config import (
     Hab4SigningCfg,
     LinuxModuleSigningCfg,
     RawSigningCfg,
+    SigningKey,
     SwuSigningCfg,
     UefiSigningCfg,
 )
@@ -180,7 +181,10 @@ Job = (
 
 class UefiSign:
     def __init__(
-        self, cert_cache: CertCache, config: UefiSigningCfg, force_overwrite: bool = False
+        self,
+        cert_cache: CertCache,
+        config: UefiSigningCfg[SigningKey],
+        force_overwrite: bool = False,
     ):
         self.cert_cache: CertCache = cert_cache
         self.config = config
@@ -228,7 +232,7 @@ class UefiSign:
 
 
 class SwuSign:
-    def __init__(self, cert_cache: CertCache, config: SwuSigningCfg):
+    def __init__(self, cert_cache: CertCache, config: SwuSigningCfg[SigningKey]):
         self.cert_cache: CertCache = cert_cache
         self.config = config
 
@@ -267,7 +271,7 @@ class SwuSign:
 
 
 class UefiVariableSign:
-    def __init__(self, cert_cache: CertCache, config: UefiSigningCfg):
+    def __init__(self, cert_cache: CertCache, config: UefiSigningCfg[SigningKey]):
         self.cert_cache: CertCache = cert_cache
         self.config = config
 
@@ -324,7 +328,7 @@ class UefiVariableSign:
 
 
 class LinuxModuleSign:
-    def __init__(self, cert_cache: CertCache, config: LinuxModuleSigningCfg):
+    def __init__(self, cert_cache: CertCache, config: LinuxModuleSigningCfg[SigningKey]):
         self.cert_cache: CertCache = cert_cache
         self.config = config
 
@@ -366,19 +370,13 @@ class LinuxModuleSign:
 
 
 class Hab4Sign:
-    def __init__(self, cert_cache: CertCache, config: Hab4SigningCfg):
+    def __init__(self, cert_cache: CertCache, config: Hab4SigningCfg[SigningKey]):
         self.cert_cache: CertCache = cert_cache
         self.config = config
 
     def preflight(self, job: Hab4SignJob) -> None:
-        if (
-            self.config.img_key is None
-            or self.config.csf_key is None
-            or self.config.srk_index is None
-        ):
-            raise OpensighubError(
-                "hab4 signing requires img_key, csf_key, and srk_index configured"
-            )
+        if self.config.srk_index is None:
+            raise OpensighubError("hab4 signing requires srk_index configured")
         raise_if_tool_missing("srktool", "cst")
 
     def make_srktable(self, output_dir: Path) -> Path:
@@ -493,8 +491,8 @@ class Hab4Sign:
             tmp_working_dir_path = Path(tmp_working_dir)
             srk_table = self.make_srktable(tmp_working_dir_path)
             assert self.config.srk_index is not None
-            assert self.config.csf_key is not None and self.config.csf_key.pkcs11_uri is not None
-            assert self.config.img_key is not None and self.config.img_key.pkcs11_uri is not None
+            assert self.config.csf_key.pkcs11_uri is not None
+            assert self.config.img_key.pkcs11_uri is not None
             self.csf_substitute(
                 csf_in,
                 csf_tmp_out,
@@ -511,7 +509,7 @@ class Hab4Sign:
 
 
 class RawSign:
-    def __init__(self, cert_cache: CertCache, config: RawSigningCfg):
+    def __init__(self, cert_cache: CertCache, config: RawSigningCfg[SigningKey]):
         self.cert_cache: CertCache = cert_cache
         self.config = config
 
@@ -727,14 +725,15 @@ class SignerRegistry:
 
     def __init__(
         self,
-        uefi_signer: UefiSign | None,
-        uefi_variable_signer: UefiVariableSign | None,
-        swu_signer: SwuSign | None,
-        linux_module_signer: LinuxModuleSign | None,
-        hab4_signer: Hab4Sign | None,
-        optee_ta_signer: OpteeTaSign | None,
-        rpi_signer: RpiSign | None,
-        rpi_eeprom_signer: RpiEepromSign | None,
+        *,
+        uefi_signer: UefiSign | None = None,
+        uefi_variable_signer: UefiVariableSign | None = None,
+        swu_signer: SwuSign | None = None,
+        linux_module_signer: LinuxModuleSign | None = None,
+        hab4_signer: Hab4Sign | None = None,
+        optee_ta_signer: OpteeTaSign | None = None,
+        rpi_signer: RpiSign | None = None,
+        rpi_eeprom_signer: RpiEepromSign | None = None,
     ):
         self._uefi_signer = uefi_signer
         self._uefi_variable_signer = uefi_variable_signer
@@ -744,6 +743,20 @@ class SignerRegistry:
         self._optee_ta_signer = optee_ta_signer
         self._rpi_signer = rpi_signer
         self._rpi_eeprom_signer = rpi_eeprom_signer
+        self.supported: frozenset[type] = frozenset(
+            type(signer)
+            for signer in (
+                uefi_signer,
+                uefi_variable_signer,
+                swu_signer,
+                linux_module_signer,
+                hab4_signer,
+                optee_ta_signer,
+                rpi_signer,
+                rpi_eeprom_signer,
+            )
+            if signer is not None
+        )
 
     def get_uefi_signer(self) -> UefiSign:
         if self._uefi_signer is None:
@@ -798,28 +811,8 @@ def _worker_init() -> None:
 
 
 class SigningPool:
-    def __init__(
-        self,
-        uefi_signer: UefiSign | None,
-        uefi_variable_signer: UefiVariableSign | None,
-        swu_signer: SwuSign | None,
-        linux_module_signer: LinuxModuleSign | None,
-        hab4_signer: Hab4Sign | None,
-        optee_ta_signer: OpteeTaSign | None,
-        rpi_signer: RpiSign | None,
-        rpi_eeprom_signer: RpiEepromSign | None,
-        parallel: int,
-    ):
-        self.registry = SignerRegistry(
-            uefi_signer,
-            uefi_variable_signer,
-            swu_signer,
-            linux_module_signer,
-            hab4_signer,
-            optee_ta_signer,
-            rpi_signer,
-            rpi_eeprom_signer,
-        )
+    def __init__(self, registry: SignerRegistry, parallel: int):
+        self.registry = registry
         self.parallel = parallel
 
     def sign(self, jobs: Sequence[Job]):

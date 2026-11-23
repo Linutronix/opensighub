@@ -4,11 +4,13 @@
 
 import logging
 import re
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
+from typing import Generic, cast
 
 import yaml
+from typing_extensions import TypeVar
 
 from opensighub.util import OpensighubError
 
@@ -109,14 +111,22 @@ class Archive:
         return {"deb": [entry.to_dict() for entry in self.deb]}
 
 
-@dataclass
+@dataclass(frozen=True)
 class UefiVariableCfg:
-    key: SigningKey
+    key: SigningKey | None = None
     attributes: list[str] | None = None
     guid: str | None = None
 
+    @classmethod
+    def from_dict(cls, data: dict, keys: dict[str, SigningKey]):
+        return cls(
+            keys[data["key"]] if "key" in data else None,
+            data.get("attributes"),
+            data.get("guid"),
+        )
+
     def to_dict(self) -> dict:
-        data: dict = {"key": self.key.cfg_id}
+        data: dict = {"key": self.key.cfg_id} if self.key is not None else {}
         if self.attributes:
             data["attributes"] = self.attributes
         if self.guid is not None:
@@ -129,54 +139,72 @@ class SwuCfg:
     attributes: list[str] | None = None
 
 
-@dataclass
-class SwuSigningCfg:
-    key: SigningKey
+K = TypeVar("K", SigningKey, SigningKey | None, default=SigningKey | None)
+
+
+@dataclass(frozen=True)
+class SwuSigningCfg(Generic[K]):
+    key: K
 
     @classmethod
     def from_dict(cls, data: dict, keys: dict[str, SigningKey]):
-        return cls(key=keys[data["key"]])
+        return SwuSigningCfg(key=keys[data["key"]] if "key" in data else None)
 
     def to_dict(self) -> dict:
-        return {"key": self.key.cfg_id}
+        return {"key": self.key.cfg_id} if self.key is not None else {}
+
+    def verified(self) -> "SwuSigningCfg[SigningKey] | None":
+        if self.key is None:
+            return None
+        return cast("SwuSigningCfg[SigningKey]", self)
 
 
-@dataclass
-class UefiSigningCfg:
-    key: SigningKey
+@dataclass(frozen=True)
+class UefiSigningCfg(Generic[K]):
+    key: K
     variables: dict[str, UefiVariableCfg] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict, keys: dict[str, SigningKey]):
         variables = {
-            k: UefiVariableCfg(keys[v["key"]], v.get("attributes"), v.get("guid"))
-            for k, v in data.get("variables", {}).items()
+            k: UefiVariableCfg.from_dict(v or {}, keys)
+            for k, v in (data.get("variables") or {}).items()
         }
-        return cls(key=keys[data["key"]], variables=variables)
+        return UefiSigningCfg(key=keys[data["key"]] if "key" in data else None, variables=variables)
 
     def to_dict(self) -> dict:
-        data: dict = {"key": self.key.cfg_id}
+        data: dict = {"key": self.key.cfg_id} if self.key is not None else {}
         if self.variables:
             data["variables"] = {k: v.to_dict() for k, v in self.variables.items()}
         return data
 
+    def verified(self) -> "UefiSigningCfg[SigningKey] | None":
+        if self.key is None:
+            return None
+        return cast("UefiSigningCfg[SigningKey]", self)
 
-@dataclass
-class LinuxModuleSigningCfg:
-    key: SigningKey
+
+@dataclass(frozen=True)
+class LinuxModuleSigningCfg(Generic[K]):
+    key: K
 
     @classmethod
     def from_dict(cls, data: dict, keys: dict[str, SigningKey]):
-        return cls(key=keys[data["key"]])
+        return LinuxModuleSigningCfg(key=keys[data["key"]] if "key" in data else None)
 
     def to_dict(self) -> dict:
-        return {"key": self.key.cfg_id}
+        return {"key": self.key.cfg_id} if self.key is not None else {}
+
+    def verified(self) -> "LinuxModuleSigningCfg[SigningKey] | None":
+        if self.key is None:
+            return None
+        return cast("LinuxModuleSigningCfg[SigningKey]", self)
 
 
-@dataclass
-class Hab4SigningCfg:
-    img_key: SigningKey | None = None
-    csf_key: SigningKey | None = None
+@dataclass(frozen=True)
+class Hab4SigningCfg(Generic[K]):
+    img_key: K
+    csf_key: K
     srk_certificates: list[PublicKeyCertificate] = field(default_factory=list)
     srk_index: int | None = None
 
@@ -187,7 +215,7 @@ class Hab4SigningCfg:
         keys: dict[str, SigningKey],
         certs: dict[str, PublicKeyCertificate],
     ):
-        return cls(
+        return Hab4SigningCfg(
             img_key=keys[data["img_key"]] if "img_key" in data else None,
             csf_key=keys[data["csf_key"]] if "csf_key" in data else None,
             srk_certificates=[certs[cert] for cert in data.get("srk_certificates", [])],
@@ -206,10 +234,15 @@ class Hab4SigningCfg:
             data["srk_certificates"] = [cert.cfg_id for cert in self.srk_certificates]
         return data
 
+    def verified(self) -> "Hab4SigningCfg[SigningKey] | None":
+        if self.img_key is None or self.csf_key is None:
+            return None
+        return cast("Hab4SigningCfg[SigningKey]", self)
 
-@dataclass
-class RawSigningCfg:
-    key: SigningKey
+
+@dataclass(frozen=True)
+class RawSigningCfg(Generic[K]):
+    key: K
     alg_hash: str | None = None
     padding: str = "pkcs1"
     salt_len: str | None = None
@@ -217,7 +250,7 @@ class RawSigningCfg:
 
     @classmethod
     def from_dict(cls, data: dict, keys: dict[str, "SigningKey"]):
-        key = keys[data["key"]]
+        key = keys[data["key"]] if "key" in data else None
         alg_hash = data.get("hash")
 
         padding = data.get("padding", "pkcs1").lower()
@@ -232,7 +265,7 @@ class RawSigningCfg:
             salt_len = None
             mgf1_md = None
 
-        return cls(
+        return RawSigningCfg(
             key=key,
             alg_hash=alg_hash,
             padding=padding,
@@ -241,7 +274,8 @@ class RawSigningCfg:
         )
 
     def to_dict(self) -> dict:
-        data: dict = {"key": self.key.cfg_id, "padding": self.padding}
+        data: dict = {"key": self.key.cfg_id} if self.key is not None else {}
+        data["padding"] = self.padding
         if self.alg_hash is not None:
             data["hash"] = self.alg_hash
         if self.salt_len is not None:
@@ -249,6 +283,11 @@ class RawSigningCfg:
         if self.mgf1_md is not None:
             data["mgf1_md"] = self.mgf1_md
         return data
+
+    def verified(self) -> "RawSigningCfg[SigningKey] | None":
+        if self.key is None:
+            return None
+        return cast("RawSigningCfg[SigningKey]", self)
 
 
 class SignerPath(StrEnum):
@@ -319,6 +358,7 @@ class SignerProfile:
         signing_keys: dict[str, SigningKey],
         trusted_certificates: dict[str, PublicKeyCertificate],
     ):
+        data = {k: v or {} for k, v in data.items()}
         uefi_cfg = UefiSigningCfg.from_dict(data["uefi"], signing_keys) if "uefi" in data else None
         swu_cfg = SwuSigningCfg.from_dict(data["swu"], signing_keys) if "swu" in data else None
         kernel_modules_cfg = (
@@ -362,62 +402,84 @@ class SignerProfile:
 
     def set_key_for_signer(self, signer_path: SignerPath, key: SigningKey) -> None:
         match signer_path:
-            case SignerPath.HAB4_IMG_KEY | SignerPath.HAB4_CSF_KEY:
-                if self.hab4 is None:
-                    self.hab4 = Hab4SigningCfg()
-                if signer_path == SignerPath.HAB4_IMG_KEY:
-                    self.hab4.img_key = key
-                else:
-                    self.hab4.csf_key = key
+            case SignerPath.HAB4_IMG_KEY:
+                self.hab4 = (
+                    replace(self.hab4, img_key=key)
+                    if self.hab4
+                    else Hab4SigningCfg(img_key=key, csf_key=None)
+                )
+            case SignerPath.HAB4_CSF_KEY:
+                self.hab4 = (
+                    replace(self.hab4, csf_key=key)
+                    if self.hab4
+                    else Hab4SigningCfg(img_key=None, csf_key=key)
+                )
             case SignerPath.OPTEE_TA:
-                if self.optee_ta is None:
-                    self.optee_ta = RawSigningCfg(key=key)
-                else:
-                    self.optee_ta.key = key
+                self.optee_ta = (
+                    replace(self.optee_ta, key=key) if self.optee_ta else RawSigningCfg(key=key)
+                )
             case SignerPath.RPI:
-                if self.rpi is None:
-                    self.rpi = RawSigningCfg(key=key)
-                else:
-                    self.rpi.key = key
+                self.rpi = replace(self.rpi, key=key) if self.rpi else RawSigningCfg(key=key)
             case SignerPath.UEFI:
-                if self.uefi is None:
-                    self.uefi = UefiSigningCfg(key=key)
-                else:
-                    self.uefi.key = key
+                self.uefi = replace(self.uefi, key=key) if self.uefi else UefiSigningCfg(key=key)
             case SignerPath.SWU:
-                if self.swu is None:
-                    self.swu = SwuSigningCfg(key=key)
-                else:
-                    self.swu.key = key
+                self.swu = replace(self.swu, key=key) if self.swu else SwuSigningCfg(key=key)
             case SignerPath.KERNEL_MODULES:
-                if self.kernel_modules is None:
-                    self.kernel_modules = LinuxModuleSigningCfg(key=key)
-                else:
-                    self.kernel_modules.key = key
+                self.kernel_modules = (
+                    replace(self.kernel_modules, key=key)
+                    if self.kernel_modules
+                    else LinuxModuleSigningCfg(key=key)
+                )
+
+    def key_for_signer(self, signer_path: SignerPath) -> SigningKey | None:
+        match signer_path:
+            case SignerPath.HAB4_IMG_KEY:
+                return self.hab4.img_key if self.hab4 else None
+            case SignerPath.HAB4_CSF_KEY:
+                return self.hab4.csf_key if self.hab4 else None
+            case SignerPath.OPTEE_TA:
+                return self.optee_ta.key if self.optee_ta else None
+            case SignerPath.RPI:
+                return self.rpi.key if self.rpi else None
+            case SignerPath.UEFI:
+                return self.uefi.key if self.uefi else None
+            case SignerPath.SWU:
+                return self.swu.key if self.swu else None
+            case SignerPath.KERNEL_MODULES:
+                return self.kernel_modules.key if self.kernel_modules else None
+
+    def unassign_signer(self, signer_path: SignerPath) -> None:
+        """Remove key reference from a signer."""
+        match signer_path:
+            case SignerPath.HAB4_IMG_KEY if self.hab4:
+                self.hab4 = replace(self.hab4, img_key=None)
+            case SignerPath.HAB4_CSF_KEY if self.hab4:
+                self.hab4 = replace(self.hab4, csf_key=None)
+            case SignerPath.OPTEE_TA if self.optee_ta:
+                self.optee_ta = replace(self.optee_ta, key=None)
+            case SignerPath.RPI if self.rpi:
+                self.rpi = replace(self.rpi, key=None)
+            case SignerPath.UEFI if self.uefi:
+                self.uefi = replace(self.uefi, key=None)
+            case SignerPath.SWU if self.swu:
+                self.swu = replace(self.swu, key=None)
+            case SignerPath.KERNEL_MODULES if self.kernel_modules:
+                self.kernel_modules = replace(self.kernel_modules, key=None)
 
     def remove_signing_key(self, key_id: str) -> None:
+        """Remove signign key and delete references."""
+        for signer_path in SignerPath:
+            key = self.key_for_signer(signer_path)
+            if key is not None and key.cfg_id == key_id:
+                self.unassign_signer(signer_path)
         if self.uefi is not None:
-            if self.uefi.key.cfg_id == key_id:
-                self.uefi = None
-            else:
-                self.uefi.variables = {
-                    name: var
-                    for name, var in self.uefi.variables.items()
-                    if var.key.cfg_id != key_id
-                }
-        if self.swu is not None and self.swu.key.cfg_id == key_id:
-            self.swu = None
-        if self.kernel_modules is not None and self.kernel_modules.key.cfg_id == key_id:
-            self.kernel_modules = None
-        if self.optee_ta is not None and self.optee_ta.key.cfg_id == key_id:
-            self.optee_ta = None
-        if self.rpi is not None and self.rpi.key.cfg_id == key_id:
-            self.rpi = None
-        if self.hab4 is not None:
-            if self.hab4.img_key is not None and self.hab4.img_key.cfg_id == key_id:
-                self.hab4.img_key = None
-            if self.hab4.csf_key is not None and self.hab4.csf_key.cfg_id == key_id:
-                self.hab4.csf_key = None
+            variables = {
+                name: replace(var, key=None)
+                if var.key is not None and var.key.cfg_id == key_id
+                else var
+                for name, var in self.uefi.variables.items()
+            }
+            self.uefi = replace(self.uefi, variables=variables)
 
 
 @dataclass
@@ -520,6 +582,10 @@ class Config:
     @property
     def profile(self) -> SignerProfile:
         return self.signer_profile(self.active_profile)
+
+    @property
+    def profile_name(self) -> str:
+        return self.active_profile or "default"
 
     @property
     def uefi(self) -> UefiSigningCfg | None:

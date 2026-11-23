@@ -28,6 +28,7 @@ from opensighub.signers import (
     OpteeTaSign,
     RpiEepromSign,
     RpiSign,
+    SignerRegistry,
     SigningPool,
     SwuSign,
     SwuSignJob,
@@ -156,17 +157,22 @@ class DebSignCmd(SigningBaseCmd):
             self.sbuild_args,
             self.assume_yes,
         )
-        worker = SigningPool(
-            UefiSign(cert_cache, config.uefi, self.assume_yes) if config.uefi else None,
-            None,  # UefiVariableSign
-            None,  # SwuSign
-            LinuxModuleSign(cert_cache, config.kernel_modules) if config.kernel_modules else None,
-            Hab4Sign(cert_cache, config.hab4) if config.hab4 else None,
-            OpteeTaSign(cert_cache, config.optee_ta) if config.optee_ta else None,
-            RpiSign(cert_cache, config.rpi) if config.rpi else None,
-            RpiEepromSign(cert_cache, config.rpi) if config.rpi else None,
-            parallel=self.parallel,
+        uefi = config.uefi.verified() if config.uefi else None
+        kernel_modules = config.kernel_modules.verified() if config.kernel_modules else None
+        hab4 = config.hab4.verified() if config.hab4 else None
+        optee_ta = config.optee_ta.verified() if config.optee_ta else None
+        rpi = config.rpi.verified() if config.rpi else None
+        registry = SignerRegistry(
+            uefi_signer=UefiSign(cert_cache, uefi, self.assume_yes) if uefi else None,
+            linux_module_signer=LinuxModuleSign(cert_cache, kernel_modules)
+            if kernel_modules
+            else None,
+            hab4_signer=Hab4Sign(cert_cache, hab4) if hab4 else None,
+            optee_ta_signer=OpteeTaSign(cert_cache, optee_ta) if optee_ta else None,
+            rpi_signer=RpiSign(cert_cache, rpi) if rpi else None,
+            rpi_eeprom_signer=RpiEepromSign(cert_cache, rpi) if rpi else None,
         )
+        worker = SigningPool(registry, self.parallel)
 
         def process():
             for job in self.jobs:
@@ -183,16 +189,11 @@ class UefiVarSignCmd(SigningBaseCmd):
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
+        uefi = config.uefi.verified() if config.uefi else None
+        if uefi is None:
+            raise OpensighubError(f'Profile "{config.profile_name}" has no uefi key assigned')
         pool = SigningPool(
-            None,  # uefi_signer
-            UefiVariableSign(cert_cache, config.uefi) if config.uefi else None,
-            None,  # swu_signer
-            None,  # linux_module_signer
-            None,  # hab4_signer
-            None,  # optee_ta_signer
-            None,  # rpi_signer
-            None,  # rpi_eeprom_signer
-            parallel=self.parallel,
+            SignerRegistry(uefi_variable_signer=UefiVariableSign(cert_cache, uefi)), self.parallel
         )
 
         def process():
@@ -208,17 +209,10 @@ class SwuSignCmd(SigningBaseCmd):
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
-        pool = SigningPool(
-            None,  # uefi_signer
-            None,  # UefiVariableSign
-            SwuSign(cert_cache, config.swu) if config.swu else None,
-            None,  # linux_module_signer
-            None,  # hab4_signer
-            None,  # optee_ta_signer
-            None,  # rpi_signer
-            None,  # rpi_eeprom_signer
-            parallel=self.parallel,
-        )
+        swu = config.swu.verified() if config.swu else None
+        if swu is None:
+            raise OpensighubError(f'Profile "{config.profile_name}" has no swu key assigned')
+        pool = SigningPool(SignerRegistry(swu_signer=SwuSign(cert_cache, swu)), self.parallel)
 
         def process():
             pool.sign(self.jobs)
@@ -233,16 +227,11 @@ class EfiBinarySignCmd(SigningBaseCmd):
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
+        uefi = config.uefi.verified() if config.uefi else None
+        if uefi is None:
+            raise OpensighubError(f'Profile "{config.profile_name}" has no uefi key assigned')
         pool = SigningPool(
-            UefiSign(cert_cache, config.uefi, self.assume_yes) if config.uefi else None,
-            None,  # uefi_variable_signer
-            None,  # swu_signer
-            None,  # linux_module_signer
-            None,  # hab4_signer
-            None,  # optee_ta_signer
-            None,  # rpi_signer
-            None,  # rpi_eeprom_signer
-            parallel=self.parallel,
+            SignerRegistry(uefi_signer=UefiSign(cert_cache, uefi, self.assume_yes)), self.parallel
         )
 
         def process():

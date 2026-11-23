@@ -15,6 +15,7 @@ from opensighub.debian import (
     DebianSigningProcessor,
     FileEntry,
     FilesJson,
+    FilesJsonType,
     LocalPackagePool,
     Package,
 )
@@ -103,19 +104,19 @@ def test_files_json(files_json):
                 trusted_certs=[],
                 files=[
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/gcdx64.efi"),
                     ),
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi"),
                     ),
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubnetx64-installer.efi"),
                     ),
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubx64.efi"),
                     ),
                 ],

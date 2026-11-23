@@ -9,23 +9,56 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from opensighub.config import Config
 from opensighub.signers import (
+    Hab4Sign,
     Hab4SignJob,
+    LinuxModuleSign,
     LinuxModuleSignJob,
+    OpteeTaSign,
     OpteeTaSignJob,
+    RpiEepromSign,
     RpiEepromSignJob,
+    RpiSign,
     RpiSignJob,
+    SignerRegistry,
     SigningPool,
+    UefiSign,
     UefiSignJob,
     confirm_overwrite,
 )
 from opensighub.util import OpensighubError, raise_if_tool_missing
 
 logger = logging.getLogger("opensighub")
+
+
+class FilesJsonType(StrEnum):
+    EFI = "efi"
+    HAB4 = "hab4"
+    LINUX_MODULE = "linux-module"
+    OPTEE_TA_CORE = "optee-ta-core"
+    RPI_BOOT = "rpi-boot"
+    RPI_EEPROM = "rpi-eeprom"
+
+
+def files_json_signer(sig_type: FilesJsonType) -> type:
+    match sig_type:
+        case FilesJsonType.EFI:
+            return UefiSign
+        case FilesJsonType.HAB4:
+            return Hab4Sign
+        case FilesJsonType.LINUX_MODULE:
+            return LinuxModuleSign
+        case FilesJsonType.OPTEE_TA_CORE:
+            return OpteeTaSign
+        case FilesJsonType.RPI_BOOT:
+            return RpiSign
+        case FilesJsonType.RPI_EEPROM:
+            return RpiEepromSign
 
 
 @dataclass
@@ -39,10 +72,25 @@ class DebianSigningJob:
 
 @dataclass
 class FileEntry:
-    sig_type: str
+    sig_type: FilesJsonType
     file: Path
     version: int | None = None
     keynum: int | None = None
+
+    @classmethod
+    def from_dict(cls, data):
+        try:
+            sig_type = FilesJsonType(data["sig_type"])
+        except ValueError:
+            raise OpensighubError(
+                f"files.json: unknown signature type {data['sig_type']}"
+            ) from None
+        return cls(
+            sig_type=sig_type,
+            file=Path(data["file"]),
+            version=int(data["version"]) if "version" in data else None,
+            keynum=int(data["keynum"]) if "keynum" in data else None,
+        )
 
 
 @dataclass
@@ -55,15 +103,7 @@ class Package:
     def from_dict(cls, data):
         return cls(
             trusted_certs=list(data.get("trusted_certs")),
-            files=[
-                FileEntry(
-                    sig_type=f["sig_type"],
-                    file=Path(f["file"]),
-                    version=int(f["version"]) if "version" in f else None,
-                    keynum=int(f["keynum"]) if "keynum" in f else None,
-                )
-                for f in data.get("files")
-            ],
+            files=[FileEntry.from_dict(f) for f in data.get("files")],
             version=data.get("version"),
         )
 
@@ -317,11 +357,20 @@ class DebianSigningProcessor:
         jobs = []
         with open(self.files_json_path, "r") as f:
             files = FilesJson.from_dict(json.load(f))
+            self._check_signers_supported(files, pool.registry)
             self.repo.download_and_extract_debian(job, files.packages)
             for pkg_name, pkg_data in files.packages.items():
                 for file in pkg_data.files:
                     jobs.append(self._make_job(pkg_name, file))
         pool.sign(jobs)
+
+    def _check_signers_supported(self, files: FilesJson, registry: SignerRegistry) -> None:
+        for package in files.packages.values():
+            for file in package.files:
+                if files_json_signer(file.sig_type) not in registry.supported:
+                    raise OpensighubError(
+                        f'No signer for {file.sig_type} in profile "{self.config.profile_name}"'
+                    )
 
     def _make_job(
         self, pkg_name: str, file: FileEntry
@@ -345,27 +394,24 @@ class DebianSigningProcessor:
             / rel_file.with_suffix(rel_file.suffix + ".sig")
         )
         detached_sig_path.parent.mkdir(parents=True, exist_ok=True)
-        if file.sig_type == "efi" and self.config.uefi:
-            return UefiSignJob(unsigned_file, detached_sig_path)
-        elif file.sig_type == "hab4" and self.config.hab4:
-            return Hab4SignJob(unsigned_file, detached_sig_path, pkg_dir)
-        elif file.sig_type == "linux-module" and self.config.kernel_modules:
-            return LinuxModuleSignJob(unsigned_file, detached_sig_path)
-        elif (file.sig_type == "optee-ta-core") and self.config.optee_ta:
-            return OpteeTaSignJob(unsigned_file, detached_sig_path, file.sig_type, file.version)
-        elif (file.sig_type == "rpi-boot") and self.config.rpi:
-            return RpiSignJob(unsigned_file, detached_sig_path)
-        elif (file.sig_type == "rpi-eeprom") and self.config.rpi:
-            return RpiEepromSignJob(
-                artifact=unsigned_file,
-                signed_artifact=detached_sig_path,
-                version=file.version,
-                keynum=file.keynum,
-            )
-
-        raise ValueError(
-            f"files.json lists signature type {file.sig_type}, but no such signer is configured"
-        )
+        match file.sig_type:
+            case FilesJsonType.EFI:
+                return UefiSignJob(unsigned_file, detached_sig_path)
+            case FilesJsonType.HAB4:
+                return Hab4SignJob(unsigned_file, detached_sig_path, pkg_dir)
+            case FilesJsonType.LINUX_MODULE:
+                return LinuxModuleSignJob(unsigned_file, detached_sig_path)
+            case FilesJsonType.OPTEE_TA_CORE:
+                return OpteeTaSignJob(unsigned_file, detached_sig_path, file.sig_type, file.version)
+            case FilesJsonType.RPI_BOOT:
+                return RpiSignJob(unsigned_file, detached_sig_path)
+            case FilesJsonType.RPI_EEPROM:
+                return RpiEepromSignJob(
+                    artifact=unsigned_file,
+                    signed_artifact=detached_sig_path,
+                    version=file.version,
+                    keynum=file.keynum,
+                )
 
     def cleanup(self):
         self.repo.tmp_dir.cleanup()

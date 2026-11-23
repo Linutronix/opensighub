@@ -82,6 +82,16 @@ def test_sign_main_missing_config_raises_opensighub_error(tmp_path):
         sign_main(run_config)
 
 
+def test_sign_main_without_assigned_key_raises(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("uefi:\n  variables:\n    db: {}\n")
+    run_config = EfiBinarySignCmd(
+        config_path=config, output=tmp_path, jobs=[], parallel=1, profile=None
+    )
+    with pytest.raises(OpensighubError, match='Profile "default" has no uefi key assigned'):
+        sign_main(run_config)
+
+
 def test_cli_with_empty_config(tmp_path):
     # some commands support auto generation of config
     run_config = parse_args(["--config", str(tmp_path / "new.yaml"), "-y", "setup", "genkey"])
