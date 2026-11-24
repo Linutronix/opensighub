@@ -15,6 +15,7 @@ from opensighub.debian import (
     DebianSigningProcessor,
     FileEntry,
     FilesJson,
+    FilesJsonType,
     LocalPackagePool,
     Package,
 )
@@ -56,7 +57,6 @@ def test_debsign(tmp_path, softhsm_shared, integration_config_yaml_file):
                 ),
             ],
             parallel=5,
-            force_overwrite=False,
         )
     )
     pkg = "opensighub-test-package-signed"
@@ -86,7 +86,6 @@ def test_debian_org_sign_and_build_shim(tmp_path, softhsm_shared, integration_co
                 ),
             ],
             parallel=5,
-            force_overwrite=False,
             run_sbuild=True,
             sbuild_args=["--no-clean-source"],
         )
@@ -105,19 +104,19 @@ def test_files_json(files_json):
                 trusted_certs=[],
                 files=[
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/gcdx64.efi"),
                     ),
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubnetx64.efi"),
                     ),
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubnetx64-installer.efi"),
                     ),
                     FileEntry(
-                        sig_type="efi",
+                        sig_type=FilesJsonType.EFI,
                         file=Path("usr/lib/grub/x86_64-efi/monolithic/grubx64.efi"),
                     ),
                 ],
@@ -185,12 +184,6 @@ def empty_config():
         log_level=20,
         signing_keys={},
         trusted_certificates={},
-        uefi=None,
-        swu=None,
-        kernel_modules=None,
-        hab4=None,
-        optee_ta=None,
-        rpi=None,
     )
 
 

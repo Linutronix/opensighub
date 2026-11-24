@@ -15,6 +15,7 @@ authors = [
 dependencies = [
     "PyYAML~=6.0",
     "platformdirs~=4.0",
+    "typing_extensions~=4.4",
 ]
 requires-python = ">= 3.11"
 keywords = ["code-signing", "pkcs11", "hsm", "secure-boot", "uefi", "debian", "embedded", "swupdate"]
@@ -49,6 +50,9 @@ markers = [
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["opensighub.util.Pkcs11ObjectType"]
 
 [tool.ruff.format]
 quote-style = "double"

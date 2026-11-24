@@ -5,6 +5,8 @@
 import argparse
 import logging
 import multiprocessing
+import os
+import signal
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,13 +14,13 @@ from enum import Enum
 from functools import cached_property
 from importlib.metadata import version
 from pathlib import Path
-from typing import TypeVar
+from typing import ClassVar, TypeVar
 
 import yaml
 from platformdirs import user_config_path
 
 from opensighub import setup
-from opensighub.config import Config
+from opensighub.config import Config, QualifiedSignerPath, SignerPath
 from opensighub.debian import DebianSigningJob, DebianSigningProcessor
 from opensighub.signers import (
     Hab4Sign,
@@ -26,6 +28,7 @@ from opensighub.signers import (
     OpteeTaSign,
     RpiEepromSign,
     RpiSign,
+    SignerRegistry,
     SigningPool,
     SwuSign,
     SwuSignJob,
@@ -33,76 +36,100 @@ from opensighub.signers import (
     UefiSignJob,
     UefiVariableSign,
     UefiVariableSignJob,
+    confirm_yn,
 )
 from opensighub.util import MultiprocessingCertCache, OpensighubError
 
 DEFAULT_CONFIG_PATH = user_config_path("opensighub") / "config.yaml"
 
-_PROPAGATE_MAIN_OPTIONS_BASH = """
+_COMPLETE_PREAMBLE_BASH = """
 _opensighub_propagate_main_options() {
-  local subcommand="$1" word
+  local word stop
   _opensighub_main_options=()
   for word in "${COMP_WORDS[@]:1}"; do
-    [ "$word" = "$subcommand" ] && break
+    for stop in "$@"; do
+      [ "$word" = "$stop" ] && return
+    done
     _opensighub_main_options+=("$word")
   done
 }
-"""
 
-_PROPAGATE_MAIN_OPTIONS_ZSH = """
-_opensighub_propagate_main_options() {
-  local subcommand="$1" word
-  local -a typed_words
-  typed_words=(${(z)BUFFER})
-  _opensighub_main_options=()
-  for word in "${typed_words[@]:1}"; do
-    [ "$word" = "$subcommand" ] && break
-    _opensighub_main_options+=("$word")
-  done
-}
-"""
-
-_LISTKEYS_KEY_ID_COMPLETE_BASH = (
-    _PROPAGATE_MAIN_OPTIONS_BASH
-    + """
 _opensighub_listkeys_key_id_compgen() {
   _opensighub_propagate_main_options setup
   compgen -W "$(opensighub "${_opensighub_main_options[@]}" setup listkeys --columns keyid 2>/dev/null)" -- "$1"
 }
-"""
-)
 
-_LISTKEYS_KEY_ID_COMPLETE_ZSH = (
-    _PROPAGATE_MAIN_OPTIONS_ZSH
-    + """
+_opensighub_profile_compgen() {
+  _opensighub_propagate_main_options debsign efibinarysign swusign uefivarsign
+  compgen -W "$(opensighub "${_opensighub_main_options[@]}" setup listprofiles 2>/dev/null)" -- "$1"
+}
+"""
+
+_COMPLETE_PREAMBLE_ZSH = """
+_opensighub_propagate_main_options() {
+  local word stop
+  local -a typed_words
+  typed_words=(${(z)BUFFER})
+  _opensighub_main_options=()
+  for word in "${typed_words[@]:1}"; do
+    for stop in "$@"; do
+      [ "$word" = "$stop" ] && return
+    done
+    _opensighub_main_options+=("$word")
+  done
+}
+
 _opensighub_listkeys_key_id_candidates() {
   _opensighub_propagate_main_options setup
   local -a keys
   keys=(${(f)"$(opensighub "${_opensighub_main_options[@]}" setup listkeys --columns keyid 2>/dev/null)"})
   compadd -a keys
 }
+
+_opensighub_profile_candidates() {
+  _opensighub_propagate_main_options debsign efibinarysign swusign uefivarsign
+  local -a profiles
+  profiles=(${(f)"$(opensighub "${_opensighub_main_options[@]}" setup listprofiles 2>/dev/null)"})
+  compadd -a profiles
+}
 """
-)
+
+_COMPLETE_PREAMBLE = {"bash": _COMPLETE_PREAMBLE_BASH, "zsh": _COMPLETE_PREAMBLE_ZSH}
 
 _LISTKEYS_KEY_ID_COMPLETE = {
     "bash": "_opensighub_listkeys_key_id_compgen",
     "zsh": "_opensighub_listkeys_key_id_candidates",
-    "preamble": {
-        "bash": _LISTKEYS_KEY_ID_COMPLETE_BASH,
-        "zsh": _LISTKEYS_KEY_ID_COMPLETE_ZSH,
-    },
+    "preamble": _COMPLETE_PREAMBLE,
+}
+
+_PROFILE_COMPLETE = {
+    "bash": "_opensighub_profile_compgen",
+    "zsh": "_opensighub_profile_candidates",
+    "preamble": _COMPLETE_PREAMBLE,
 }
 
 
 @dataclass
 class BaseCmd:
+    allow_create_config: ClassVar[bool] = False
+
     config_path: Path
     output: Path
+    assume_yes: bool = field(default=False, kw_only=True)
 
     @cached_property
     def config(self) -> Config:
         try:
             cfg_dict = yaml.safe_load(self.config_path.read_text()) or {}
+        except FileNotFoundError:
+            if not self.allow_create_config:
+                raise OpensighubError(f"Config file '{self.config_path}' does not exist") from None
+            confirm_yn(
+                f"config file '{self.config_path}' does not exist, create it",
+                f"Not creating config file '{self.config_path}'. Pass -y/--yes to create it.",
+                self.assume_yes,
+            )
+            cfg_dict = {}
         except OSError as e:
             raise OpensighubError(f"Could not read config file: {e}") from e
         return Config.from_dict(cfg_dict, source=self.config_path)
@@ -111,7 +138,13 @@ class BaseCmd:
 @dataclass
 class SigningBaseCmd(BaseCmd):
     parallel: int
-    force_overwrite: bool
+    profile: str | None = field(default=None, kw_only=True)
+
+    @cached_property
+    def config(self) -> Config:
+        config = super().config
+        config.select_profile(self.profile)
+        return config
 
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
@@ -133,19 +166,24 @@ class DebSignCmd(SigningBaseCmd):
             Path(self.output),
             self.run_sbuild,
             self.sbuild_args,
-            self.force_overwrite,
+            self.assume_yes,
         )
-        worker = SigningPool(
-            UefiSign(cert_cache, config.uefi, self.force_overwrite) if config.uefi else None,
-            None,  # UefiVariableSign
-            None,  # SwuSign
-            LinuxModuleSign(cert_cache, config.kernel_modules) if config.kernel_modules else None,
-            Hab4Sign(cert_cache, config.hab4) if config.hab4 else None,
-            OpteeTaSign(cert_cache, config.optee_ta) if config.optee_ta else None,
-            RpiSign(cert_cache, config.rpi) if config.rpi else None,
-            RpiEepromSign(cert_cache, config.rpi) if config.rpi else None,
-            parallel=self.parallel,
+        uefi = config.uefi.verified() if config.uefi else None
+        kernel_modules = config.kernel_modules.verified() if config.kernel_modules else None
+        hab4 = config.hab4.verified() if config.hab4 else None
+        optee_ta = config.optee_ta.verified() if config.optee_ta else None
+        rpi = config.rpi.verified() if config.rpi else None
+        registry = SignerRegistry(
+            uefi_signer=UefiSign(cert_cache, uefi, self.assume_yes) if uefi else None,
+            linux_module_signer=LinuxModuleSign(cert_cache, kernel_modules)
+            if kernel_modules
+            else None,
+            hab4_signer=Hab4Sign(cert_cache, hab4) if hab4 else None,
+            optee_ta_signer=OpteeTaSign(cert_cache, optee_ta) if optee_ta else None,
+            rpi_signer=RpiSign(cert_cache, rpi) if rpi else None,
+            rpi_eeprom_signer=RpiEepromSign(cert_cache, rpi) if rpi else None,
         )
+        worker = SigningPool(registry, self.parallel)
 
         def process():
             for job in self.jobs:
@@ -162,16 +200,11 @@ class UefiVarSignCmd(SigningBaseCmd):
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
+        uefi = config.uefi.verified() if config.uefi else None
+        if uefi is None:
+            raise OpensighubError(f'Profile "{config.profile_name}" has no uefi key assigned')
         pool = SigningPool(
-            None,  # uefi_signer
-            UefiVariableSign(cert_cache, config.uefi) if config.uefi else None,
-            None,  # swu_signer
-            None,  # linux_module_signer
-            None,  # hab4_signer
-            None,  # optee_ta_signer
-            None,  # rpi_signer
-            None,  # rpi_eeprom_signer
-            parallel=self.parallel,
+            SignerRegistry(uefi_variable_signer=UefiVariableSign(cert_cache, uefi)), self.parallel
         )
 
         def process():
@@ -187,17 +220,10 @@ class SwuSignCmd(SigningBaseCmd):
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
-        pool = SigningPool(
-            None,  # uefi_signer
-            None,  # UefiVariableSign
-            SwuSign(cert_cache, config.swu) if config.swu else None,
-            None,  # linux_module_signer
-            None,  # hab4_signer
-            None,  # optee_ta_signer
-            None,  # rpi_signer
-            None,  # rpi_eeprom_signer
-            parallel=self.parallel,
-        )
+        swu = config.swu.verified() if config.swu else None
+        if swu is None:
+            raise OpensighubError(f'Profile "{config.profile_name}" has no swu key assigned')
+        pool = SigningPool(SignerRegistry(swu_signer=SwuSign(cert_cache, swu)), self.parallel)
 
         def process():
             pool.sign(self.jobs)
@@ -212,16 +238,11 @@ class EfiBinarySignCmd(SigningBaseCmd):
     def processor_factory(
         self, config: Config, cert_cache: MultiprocessingCertCache
     ) -> Callable[[], None]:
+        uefi = config.uefi.verified() if config.uefi else None
+        if uefi is None:
+            raise OpensighubError(f'Profile "{config.profile_name}" has no uefi key assigned')
         pool = SigningPool(
-            UefiSign(cert_cache, config.uefi, self.force_overwrite) if config.uefi else None,
-            None,  # uefi_variable_signer
-            None,  # swu_signer
-            None,  # linux_module_signer
-            None,  # hab4_signer
-            None,  # optee_ta_signer
-            None,  # rpi_signer
-            None,  # rpi_eeprom_signer
-            parallel=self.parallel,
+            SignerRegistry(uefi_signer=UefiSign(cert_cache, uefi, self.assume_yes)), self.parallel
         )
 
         def process():
@@ -237,11 +258,13 @@ class SoftHsmCmd(BaseCmd):
 
 @dataclass
 class GenKeyCmd(BaseCmd):
+    allow_create_config = True
+
     key_id: str
     key_properties: setup.KeyProperties
     token: str
     pin_source: str | None
-    use_for: list[setup.GenKeyUseFor]
+    use_for: list[QualifiedSignerPath]
 
 
 @dataclass
@@ -250,10 +273,20 @@ class DelKeyCmd(BaseCmd):
 
 
 @dataclass
+class AssignCmd(BaseCmd):
+    key_id: str
+    signers: list[QualifiedSignerPath]
+
+
+@dataclass
+class UnassignCmd(BaseCmd):
+    signers: list[QualifiedSignerPath]
+
+
+@dataclass
 class ImportCertCmd(BaseCmd):
     cert_path: Path
     key_id: str | None
-    force_overwrite: bool
 
 
 @dataclass
@@ -263,14 +296,28 @@ class ListKeysCmd(BaseCmd):
 
 
 @dataclass
+class ListProfilesCmd(BaseCmd):
+    pass
+
+
+@dataclass
 class CsrCmd(BaseCmd):
     key_id: str
     subject: setup.Subject
-    force_overwrite: bool
     purpose: list[setup.ExtendedKeyUsage] | None
 
 
-SetupCmd = SoftHsmCmd | GenKeyCmd | DelKeyCmd | ImportCertCmd | ListKeysCmd | CsrCmd
+SetupCmd = (
+    SoftHsmCmd
+    | GenKeyCmd
+    | DelKeyCmd
+    | AssignCmd
+    | UnassignCmd
+    | ImportCertCmd
+    | ListKeysCmd
+    | ListProfilesCmd
+    | CsrCmd
+)
 SigningCmd = DebSignCmd | UefiVarSignCmd | SwuSignCmd | EfiBinarySignCmd
 
 
@@ -363,6 +410,27 @@ def _comma_separated_enum(enum_cls: type[EnumT]) -> Callable[[str], list[EnumT]]
             ) from e
 
     return parse
+
+
+def _qualified_signer_path(value: str) -> QualifiedSignerPath:
+    try:
+        return QualifiedSignerPath.parse(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"{e}. Available signers: {', '.join(SignerPath)}") from e
+
+
+def _qualified_signer_paths(value: str) -> list[QualifiedSignerPath]:
+    return [_qualified_signer_path(v) for v in value.split(",") if v]
+
+
+def _add_profile_argument(parser: argparse.ArgumentParser) -> argparse.Action:
+    return parser.add_argument(
+        "-P",
+        "--profile",
+        default=os.environ.get("OPENSIGHUB_PROFILE") or None,
+        help="Select a signer profile from the config. Defaults to $OPENSIGHUB_PROFILE, "
+        "otherwise to the default profile, i.e. the signer sections at the top level of the config.",
+    )
 
 
 def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
@@ -491,6 +559,10 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         help="One or more (U)EFI binaries to sign. Paths are absolute, or "
         "relative to the current working directory.",
     )
+    profile_args = [
+        _add_profile_argument(signing_parser)
+        for signing_parser in (debsign_parser, uefi_parser, swu_parser, efibinary_parser)
+    ]
     setup_parser = sub_parsers.add_parser(
         "setup",
         help="Set up user-local environment for opensighub to help getting started.",
@@ -545,9 +617,11 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
     )
     genkey_parser.add_argument(
         "--use-for",
-        type=_comma_separated_enum(setup.GenKeyUseFor),
+        type=_qualified_signer_paths,
         default=[],
-        help=f"Comma-separated: {', '.join(setup.GenKeyUseFor)}.",
+        help="Comma-separated signers to assign the key to. Available signers: "
+        f"{', '.join(SignerPath)}. The 'profile/signer' form assigns to a specific profile rather "
+        "than the default profile.",
     )
     delkey_parser = setup_sub_parsers.add_parser(
         "delkey",
@@ -559,6 +633,37 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
     delkey_key_id_arg = delkey_parser.add_argument(
         "key_id",
         help="ID of the key in config.yaml's signing-keys section to delete.",
+    )
+    assign_parser = setup_sub_parsers.add_parser(
+        "assign",
+        help="Assign a signing key to signers.",
+        description="Only the key of a signer is changed, its other settings stay as they are.",
+    )
+    assign_key_id_arg = assign_parser.add_argument(
+        "key_id",
+        help="ID of the key in config.yaml's signing-keys section to assign.",
+    )
+    assign_parser.add_argument(
+        "signers",
+        nargs="+",
+        type=_qualified_signer_path,
+        metavar="SIGNER",
+        help=f"Signer to assign the key to. Available signers: {', '.join(SignerPath)}. The "
+        "'profile/signer' form assigns to a specific profile rather than the default profile.",
+    )
+    unassign_parser = setup_sub_parsers.add_parser(
+        "unassign",
+        help="Remove the signing key from signers.",
+        description="Only the key of a signer is removed, its other settings stay as they are. "
+        "The key itself stays configured.",
+    )
+    unassign_parser.add_argument(
+        "signers",
+        nargs="+",
+        type=_qualified_signer_path,
+        metavar="SIGNER",
+        help=f"Signer to remove the key from. Available signers: {', '.join(SignerPath)}. The "
+        "'profile/signer' form refers to a specific profile rather than the default profile.",
     )
     importcert_parser = setup_sub_parsers.add_parser(
         "importcert",
@@ -592,6 +697,11 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         default=[setup.KeyInfoColumn.KEYID, setup.KeyInfoColumn.URI, setup.KeyInfoColumn.STATUS],
         help="Comma-separated list of columns to print, in order. Available: "
         f"{', '.join(setup.KeyInfoColumn)}. Status is one of available/loginrequired/offline/invalid.",
+    )
+    setup_sub_parsers.add_parser(
+        "listprofiles",
+        help="List the signer profiles defined in the configuration.",
+        description="Prints one profile per line. The default profile is not printed.",
     )
     csr_parser = setup_sub_parsers.add_parser(
         "csr",
@@ -635,7 +745,10 @@ def get_parser(generate_completion: bool = False) -> argparse.ArgumentParser:
         binaries_arg.complete = shtab.FILE  # type: ignore[attr-defined]
         key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
         delkey_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
+        assign_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
         importcert_key_id_arg.complete = _LISTKEYS_KEY_ID_COMPLETE  # type: ignore[attr-defined]
+        for profile_arg in profile_args:
+            profile_arg.complete = _PROFILE_COMPLETE  # type: ignore[attr-defined]
 
     return parser
 
@@ -656,6 +769,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         return GenKeyCmd(
             config_path=Path(args.config),
             output=Path(args.output),
+            assume_yes=args.yes,
             key_id=args.key_id,
             key_properties=setup.KeyProperties(
                 key_type=args.key_type,
@@ -672,13 +786,25 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             output=Path(args.output),
             key_id=args.key_id,
         )
+    if args.command == "setup" and args.setup_command == "assign":
+        return AssignCmd(
+            config_path=Path(args.config),
+            output=Path(args.output),
+            key_id=args.key_id,
+            signers=args.signers,
+            assume_yes=args.yes,
+        )
+    if args.command == "setup" and args.setup_command == "unassign":
+        return UnassignCmd(
+            config_path=Path(args.config), output=Path(args.output), signers=args.signers
+        )
     if args.command == "setup" and args.setup_command == "importcert":
         return ImportCertCmd(
             config_path=Path(args.config),
             output=Path(args.output),
             key_id=args.key_id,
             cert_path=args.cert_path,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     if args.command == "setup" and args.setup_command == "listkeys":
         return ListKeysCmd(
@@ -687,6 +813,8 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
             key_id=args.key_id,
             columns=args.columns,
         )
+    if args.command == "setup" and args.setup_command == "listprofiles":
+        return ListProfilesCmd(config_path=Path(args.config), output=Path(args.output))
     if args.command == "setup" and args.setup_command == "csr":
         return CsrCmd(
             config_path=Path(args.config),
@@ -701,7 +829,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 common_name=args.common_name,
                 email_address=args.email_address,
             ),
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
             purpose=args.purpose,
         )
     if args.command == "debsign" and args.passthrough_args and not args.build:
@@ -710,15 +838,17 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
         outfile = Path(args.output) / Path(args.swu).name
         return SwuSignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=outfile,
             jobs=[SwuSignJob(Path(args.swu), outfile)],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     if args.command == "efibinarysign":
         detached = args.detached
         return EfiBinarySignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=Path(args.output),
             jobs=[
                 UefiSignJob(
@@ -730,11 +860,12 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 for binary in args.binaries
             ],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     if args.command == "uefivarsign":
         return UefiVarSignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=Path(args.output),
             jobs=[
                 UefiVariableSignJob(
@@ -743,11 +874,12 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 for name, blob in (v.split(":") for v in args.variables)
             ],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
         )
     elif args.command == "debsign":
         return DebSignCmd(
             config_path=Path(args.config),
+            profile=args.profile,
             output=Path(args.output),
             jobs=[
                 DebianSigningJob(
@@ -760,7 +892,7 @@ def parse_args(arg_list: list[str] | None = None) -> SigningCmd | SetupCmd:
                 for template in args.templates
             ],
             parallel=args.parallel,
-            force_overwrite=args.yes,
+            assume_yes=args.yes,
             run_sbuild=args.build,
             sbuild_args=args.passthrough_args,
         )
@@ -794,26 +926,36 @@ def run_setup(run_config: SetupCmd) -> None:
             run_config.token,
             run_config.pin_source,
             run_config.use_for,
+            assume_yes=run_config.assume_yes,
         )
     elif isinstance(run_config, DelKeyCmd):
         setup.setup_delkey(run_config.config, run_config.key_id)
+    elif isinstance(run_config, AssignCmd):
+        setup.setup_assign(
+            run_config.config, run_config.key_id, run_config.signers, run_config.assume_yes
+        )
+    elif isinstance(run_config, UnassignCmd):
+        setup.setup_unassign(run_config.config, run_config.signers)
     elif isinstance(run_config, ImportCertCmd):
         setup.setup_importcert(
             run_config.config,
             run_config.cert_path,
             run_config.key_id,
-            run_config.force_overwrite,
+            run_config.assume_yes,
         )
     elif isinstance(run_config, ListKeysCmd):
         key_info = setup.get_key_info(run_config.config, run_config.columns, run_config.key_id)
         print("\n".join(" ".join(row) for row in key_info))
+    elif isinstance(run_config, ListProfilesCmd):
+        for name in run_config.config.profiles:
+            print(name)
     elif isinstance(run_config, CsrCmd):
         setup.generate_csr(
             run_config.config,
             run_config.key_id,
             run_config.output,
             run_config.subject,
-            run_config.force_overwrite,
+            run_config.assume_yes,
             run_config.purpose,
         )
     else:
@@ -835,6 +977,9 @@ def main():
     except OpensighubError as e:
         print(f"opensighub: error: {e}", file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        print("opensighub: interrupted", file=sys.stderr)
+        sys.exit(128 + signal.SIGINT)
 
 
 if __name__ == "__main__":

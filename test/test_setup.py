@@ -5,8 +5,9 @@
 import subprocess
 
 import pytest
+import yaml
 
-from opensighub.config import SigningKey
+from opensighub.config import QualifiedSignerPath, SigningKey
 from opensighub.setup import (
     ExtendedKeyUsage,
     KeyInfoColumn,
@@ -14,9 +15,11 @@ from opensighub.setup import (
     Subject,
     generate_csr,
     get_key_info,
+    setup_assign,
     setup_delkey,
     setup_genkey,
     setup_importcert,
+    setup_unassign,
 )
 from opensighub.util import OpensighubError
 
@@ -43,7 +46,7 @@ def test_setup_delkey_key_without_pkcs11_uri_raises(tmp_path, unit_config):
 
 @pytest.mark.integration
 def test_setup_delkey_removes_key_from_token_and_config(
-    softhsm, unit_config, tmp_path, sample_pin_file
+    softhsm, unit_config, tmp_path, sample_pin_file, caplog
 ):
     unit_config._source = tmp_path / "config.yaml"
     setup_genkey(
@@ -55,8 +58,11 @@ def test_setup_delkey_removes_key_from_token_and_config(
     )
     assert "delkey-integration-test" in unit_config.signing_keys
 
-    setup_delkey(unit_config, "delkey-integration-test")
+    with caplog.at_level("INFO", logger="opensighub"):
+        setup_delkey(unit_config, "delkey-integration-test")
     assert "delkey-integration-test" not in unit_config.signing_keys
+    assert "Certificate 'delkey-integration-test' deleted from " in caplog.text
+    assert "Key 'delkey-integration-test' deleted from " in caplog.text
 
     status = get_key_info(
         unit_config, [KeyInfoColumn.STATUS], "acme-2025-uefi"
@@ -309,3 +315,91 @@ def test_setup_get_key_info_status_multiple_keys_preserves_order(
         assert row[1] in ("available", "loginrequired", "offline", "invalid")
     uefi_row = next(row for row in key_info if row[0] == "acme-2025-uefi")
     assert uefi_row[1] == "available"
+
+
+def test_setup_new_profile_needs_confirmation(tmp_path, unit_config, monkeypatch):
+    monkeypatch.setattr("opensighub.setup.pkcs11_generate_keypair", None)
+    unit_config._source = tmp_path / "config.yaml"
+    with pytest.raises(OpensighubError, match="Profile 'product1' does not exist"):
+        setup_genkey(
+            unit_config,
+            "k",
+            KeyProperties(),
+            token="SoftHSM",
+            pin_source="/dev/null",
+            use_for=[QualifiedSignerPath.parse("product1/uefi")],
+        )
+    assert "product1" not in unit_config.profiles
+
+
+def test_setup_genkey_replacing_assigned_key_needs_confirmation(tmp_path, unit_config, monkeypatch):
+    monkeypatch.setattr("opensighub.setup.pkcs11_generate_keypair", None)
+    unit_config._source = tmp_path / "config.yaml"
+    with pytest.raises(OpensighubError, match="Signer 'swu' already uses key 'acme-2025-swu'"):
+        setup_genkey(
+            unit_config,
+            "k",
+            KeyProperties(),
+            token="SoftHSM",
+            pin_source="/dev/null",
+            use_for=[QualifiedSignerPath.parse("swu")],
+        )
+
+
+def test_setup_assign_unknown_key_raises(tmp_path, unit_config):
+    unit_config._source = tmp_path / "config.yaml"
+    with pytest.raises(OpensighubError, match="No signing key 'nope'"):
+        setup_assign(unit_config, "nope", [QualifiedSignerPath.parse("uefi")])
+
+
+def test_setup_assign_needs_confirmation(tmp_path, unit_config):
+    unit_config._source = tmp_path / "config.yaml"
+    product1_uefi = [QualifiedSignerPath.parse("product1/uefi")]
+    uefi = [QualifiedSignerPath.parse("uefi")]
+    setup_assign(unit_config, "acme-2025-uefi", uefi)
+    with pytest.raises(OpensighubError, match="Profile 'product1' does not exist"):
+        setup_assign(unit_config, "acme-2025-swu", product1_uefi)
+    with pytest.raises(OpensighubError, match="Signer 'uefi' already uses key 'acme-2025-uefi'"):
+        setup_assign(unit_config, "acme-2025-swu", uefi)
+    setup_assign(unit_config, "acme-2025-swu", product1_uefi + uefi, assume_yes=True)
+    saved = yaml.safe_load(unit_config._source.read_text())
+    assert saved["profiles"] == {"product1": {"uefi": {"key": "acme-2025-swu"}}}
+    assert saved["uefi"]["key"] == "acme-2025-swu"
+    assert "myvar" in saved["uefi"]["variables"]
+
+
+def test_setup_unassign(tmp_path, unit_config, caplog):
+    unit_config._source = tmp_path / "config.yaml"
+    unit_config.add_profile("product1")
+    signers = ["uefi", "hab4:img_key", "product1/uefi"]
+    with caplog.at_level("INFO", logger="opensighub"):
+        setup_unassign(unit_config, [QualifiedSignerPath.parse(s) for s in signers])
+    assert "Signer 'product1/uefi' has no key assigned" in caplog.text
+    saved = yaml.safe_load(unit_config._source.read_text())
+    assert "key" not in saved["uefi"]
+    assert "myvar" in saved["uefi"]["variables"]
+    assert "img_key" not in saved["hab4"]
+    assert saved["hab4"]["csf_key"] == "acme-2025-hab4-csf"
+    assert "acme-2025-uefi" in saved["signing-keys"]
+    with pytest.raises(OpensighubError, match="Profile 'nope' not defined"):
+        setup_unassign(unit_config, [QualifiedSignerPath.parse("nope/uefi")])
+
+
+@pytest.mark.integration
+def test_setup_genkey_creates_profile_with_yes(softhsm, unit_config, tmp_path, sample_pin_file):
+    unit_config._source = tmp_path / "config.yaml"
+    setup_genkey(
+        unit_config,
+        "product1-uefi",
+        KeyProperties(),
+        token="SoftHSM",
+        pin_source=str(sample_pin_file),
+        use_for=[
+            QualifiedSignerPath.parse("product1/uefi"),
+            QualifiedSignerPath.parse("product1/swu"),
+        ],
+        assume_yes=True,
+    )
+    assert unit_config.profiles["product1"].uefi.key.cfg_id == "product1-uefi"
+    assert unit_config.profiles["product1"].swu.key.cfg_id == "product1-uefi"
+    assert unit_config.default_profile.uefi.key.cfg_id != "product1-uefi"
